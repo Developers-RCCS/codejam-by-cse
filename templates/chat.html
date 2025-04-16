@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en" class="bg-gray-900 text-white">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RaviBot</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="h-screen flex flex-col">
+
+    <div class="bg-gray-800 p-4 flex justify-between items-center shadow">
+        <h1 class="text-lime-400 text-2xl font-bold">🧠 RaviBot</h1>
+        <a href="/clear" class="text-sm text-gray-300 border border-gray-500 px-3 py-1 rounded hover:text-white">🗑
+            Clear</a>
+    </div>
+
+    <div id="chat-box" class="flex-1 overflow-y-auto p-4 space-y-4">
+        {% for msg in chat %}
+        <div
+            class="max-w-[70%] p-3 rounded-lg whitespace-pre-wrap {% if msg.sender == 'user' %}bg-lime-700 ml-auto{% else %}bg-gray-800{% endif %}">
+            {% if msg.sender == 'user' %}
+            <p>{{ msg.text }}</p>
+            {% else %}
+            <div class="prose prose-invert max-w-none">{{ msg.text | safe }}</div>
+            {% if msg.pages %}
+            <p class="text-sm text-lime-300 mt-2">📄 Pages: {{ msg.pages | join(', ') }}</p>
+            {% endif %}
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+
+    <form method="POST" class="p-4 bg-gray-800 flex gap-2">
+        <input name="query" autocomplete="off" placeholder="Ask something..."
+            class="flex-1 p-2 rounded bg-gray-700 text-white placeholder-gray-400 outline-none" />
+        <button type="submit" class="bg-lime-600 hover:bg-lime-500 px-4 py-2 rounded text-white">
+            Send
+        </button>
+    </form>
+
+    <script>
+        const chatBox = document.getElementById("chat-box");
+        chatBox.scrollTop = chatBox.scrollHeight;
+    </script>
+</body>
+
+</html>
