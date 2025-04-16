@@ -4,7 +4,6 @@ from .query_analyzer import QueryAnalyzerAgent
 from .retriever import RetrieverAgent
 from .generator import GeneratorAgent
 from .reference_tracker import ReferenceTrackerAgent
-# Import the new ContextExpansionAgent
 from .context_expander import ContextExpansionAgent
 
 class OrchestratorAgent(BaseAgent):
@@ -15,25 +14,30 @@ class OrchestratorAgent(BaseAgent):
         self.retriever = RetrieverAgent()
         self.generator = GeneratorAgent()
         self.reference_tracker = ReferenceTrackerAgent()
-        self.context_expander = ContextExpansionAgent() # Initialize the new agent
+        self.context_expander = ContextExpansionAgent()
         print("✅ Orchestrator ready.")
 
     def run(self, query: str, chat_history: list = None) -> dict:
-        """Runs the full QA pipeline."""
+        """Runs the full QA pipeline with enhanced query handling, retrieval, and context expansion."""
         print(f"\n🔄 Orchestrating response for query: '{query}'")
 
         # 1. Analyze Query
         query_analysis = self.query_analyzer.run(query=query)
-        refined_query = query_analysis["refined_query"]
-        keywords = query_analysis["keywords"]
+        refined_query = query_analysis.get("refined_query", query)
+        
+        # Handle complex queries with decomposition if needed
+        if query_analysis.get("needs_decomposition", False) and len(query_analysis.get("sub_queries", [])) > 1:
+            print(f"🧩 Complex query detected, processing {len(query_analysis['sub_queries'])} sub-queries")
+            # This would be implemented to run sub-queries separately and combine results
+            # For now, we'll continue with the main refined query
 
-        # TODO: Integrate chat_history into context/query if needed
+        # 2. Retrieve Context with advanced retriever
+        retrieved_chunks = self.retriever.run(
+            query=refined_query, 
+            query_analysis=query_analysis
+        )
 
-        # 2. Retrieve Context (Pass keywords to the updated retriever)
-        retrieved_chunks = self.retriever.run(query=refined_query, keywords=keywords)
-
-        # 3. Assess & Expand Context (Prompt 5)
-        # Pass the retriever agent itself to allow expander access to full data if needed
+        # 3. Assess & Expand Context
         final_context_chunks, aggregated_metadata = self.context_expander.run(
             retrieved_chunks=retrieved_chunks,
             query_analysis=query_analysis,
@@ -49,36 +53,23 @@ class OrchestratorAgent(BaseAgent):
                 "retrieved_chunks": []
             }
 
-        # 4. Generate Answer (using final context)
-        # The generator agent internally joins the text from the chunks
-        answer = self.generator.run(query=query_analysis["original_query"], context_chunks=final_context_chunks)
+        # 4. Generate Answer with query-type-aware prompting
+        answer = self.generator.run(
+            query=query_analysis["original_query"], 
+            context_chunks=final_context_chunks,
+            query_analysis=query_analysis
+        )
 
-        # 5. Track References (using aggregated metadata from expander)
-        # Use the metadata aggregated by the ContextExpansionAgent
+        # 5. Use the metadata from context expander for references
         references = aggregated_metadata
 
-        # 6. Format Output
+        # 6. Format final output
         final_answer = answer
-        page_refs = references.get("pages", [])
-        section_refs = references.get("sections", []) # Get aggregated sections
-
-        ref_string_parts = []
-        if page_refs:
-            ref_string_parts.append(f"p. {', '.join(map(str, page_refs))}")
-        # Optionally add section display logic here if needed
-        # if section_refs:
-        #     ref_string_parts.append(f"Sections: {', '.join(section_refs)}")
-
-        ref_string = ", ".join(ref_string_parts)
-
-        # Append references if not already included by the generator
-        if ref_string and not any(f"[p. {p}]" in final_answer for p in page_refs):
-             final_answer += f"\n\n*References: [{ref_string}]*"
-
+        
         print("✅ Orchestration complete.")
         return {
             "answer": final_answer,
-            "references": references, # Return the aggregated references
+            "references": references,
             "query_analysis": query_analysis,
-            "retrieved_chunks": final_context_chunks # Return final chunks used
+            "retrieved_chunks": final_context_chunks
         }
