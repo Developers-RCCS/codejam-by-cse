@@ -3,4 +3,4 @@ import os
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("AIzaSyAMLB9cHU2GrAApKtZjfqau0Pdq_RzlSno")
+GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY")
