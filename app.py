@@ -1,46 +1,46 @@
 from flask import Flask, render_template, request, session, redirect, url_for
 from markdown import markdown
-# Import agents instead of direct functions
-from agents.retriever import RetrieverAgent
-from agents.generator import GeneratorAgent
-from agents.reference_tracker import ReferenceTrackerAgent
+# Import the main orchestrator agent
+from agents.orchestrator import OrchestratorAgent
+import os # For secret key
 
 app = Flask(__name__)
-app.secret_key = "ravi-bot-secret"  # required for session
+# Use an environment variable or generate a random key for production
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "a_default_development_secret_key")
 
-# Initialize agents (load models/indexes)
-retriever = RetrieverAgent()
-generator = GeneratorAgent()
-reference_tracker = ReferenceTrackerAgent()
+# Initialize the orchestrator (loads all sub-agents)
+orchestrator = OrchestratorAgent()
 
 @app.route("/", methods=["GET", "POST"])
 def chat():
     if "chat_history" not in session:
-        session["chat_history"] = []
+        session["chat_history"] = [] # Store dicts: {"user": ..., "bot": ..., "references": ...}
 
     if request.method == "POST":
         user_query = request.form["query"]
 
-        # 1. Retrieve relevant chunks
-        context_chunks = retriever.run(query=user_query)
-
-        # 2. Generate answer
-        bot_answer_raw = generator.run(query=user_query, context_chunks=context_chunks)
-
-        # 3. Track references (optional for now, generator includes basic refs)
-        references = reference_tracker.run(context_chunks=context_chunks)
-        # You might integrate references more cleanly into the answer later
+        # Run the orchestrator
+        # Pass Flask session history if needed (adapt format if necessary)
+        # For now, passing empty history to orchestrator, Flask manages its own
+        result = orchestrator.run(query=user_query, chat_history=[]) # Pass empty for now
 
         # Convert markdown answer to HTML
-        bot_answer_html = markdown(bot_answer_raw)
+        bot_answer_html = markdown(result["answer"])
 
         # Store interaction in session
-        session["chat_history"].append({"user": user_query, "bot": bot_answer_html, "references": references})
-        session.modified = True # Important for mutable session data
+        session["chat_history"].append({
+            "user": user_query,
+            "bot": bot_answer_html,
+            "references": result["references"] # Store structured references
+        })
+        session.modified = True # Important!
 
         return redirect(url_for("chat"))
 
-    return render_template("chat.html", chat_history=session["chat_history"])
+    # Pass history in the correct format for the template
+    template_history = session.get("chat_history", [])
+    return render_template("chat.html", chat_history=template_history)
+
 
 @app.route("/clear")
 def clear_chat():
@@ -48,5 +48,6 @@ def clear_chat():
     return redirect(url_for("chat"))
 
 if __name__ == "__main__":
-    # Use host='0.0.0.0' to make it accessible on the network if needed
-    app.run(debug=True, host='0.0.0.0')
+    # Set debug=False for production
+    # Consider using a production server like Gunicorn or Waitress
+    app.run(debug=True, host='0.0.0.0', port=5000) # Use port 5000 explicitly

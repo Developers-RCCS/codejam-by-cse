@@ -1,14 +1,13 @@
 # cli_chat.py
-from agents.retriever import RetrieverAgent
-from agents.generator import GeneratorAgent
-from agents.reference_tracker import ReferenceTrackerAgent
+from agents.orchestrator import OrchestratorAgent
+import pprint # For potentially pretty-printing debug info
 
 def main():
-    print("Initializing agents...")
-    retriever = RetrieverAgent()
-    generator = GeneratorAgent()
-    reference_tracker = ReferenceTrackerAgent()
+    print("Initializing chatbot...")
+    orchestrator = OrchestratorAgent()
     print("--- Chatbot CLI Initialized --- Type 'exit' or 'quit' to end ---")
+
+    chat_history = [] # Simple list to store conversation turns
 
     while True:
         try:
@@ -17,24 +16,32 @@ def main():
                 print("👋 Exiting chatbot.")
                 break
 
-            # 1. Retrieve
-            context_chunks = retriever.run(query=query)
+            # Run the orchestrator
+            result = orchestrator.run(query=query, chat_history=chat_history)
 
-            if not context_chunks:
-                print("\n🤖 Bot: I couldn't find relevant information for that query.")
-                continue
-
-            # 2. Generate
-            answer = generator.run(query=query, context_chunks=context_chunks)
-
-            # 3. Track References (and display)
-            references = reference_tracker.run(context_chunks=context_chunks)
-            page_refs = references.get("pages", [])
-
+            # Display the result
             print("\n🤖 Bot:")
-            print(answer)
-            if page_refs:
-                print(f"\n*References: [p. {', '.join(map(str, page_refs))}]*" ) # Ensure refs are shown
+            print(result["answer"])
+
+            # Optional: Display references if not included in the answer string already
+            # page_refs = result["references"].get("pages", [])
+            # if page_refs and "*References:" not in result["answer"]:
+            #     print(f"\n*References: [p. {', '.join(map(str, page_refs))}]*")
+
+            # Optional: Display debug info
+            # print("\n--- Debug Info ---")
+            # print("Query Analysis:", result["query_analysis"])
+            # print("Retrieved Chunks:", len(result["retrieved_chunks"]))
+            # print("References:", result["references"])
+            # print("------------------")
+
+
+            # Update chat history (simple version)
+            chat_history.append({"role": "user", "content": query})
+            chat_history.append({"role": "assistant", "content": result["answer"]})
+            # Keep history manageable (e.g., last 10 turns)
+            chat_history = chat_history[-10:]
+
 
         except EOFError:
             print("\n👋 Exiting chatbot.")
@@ -44,7 +51,7 @@ def main():
             break
         except Exception as e:
             print(f"\n❌ An unexpected error occurred: {e}")
-            # Optionally add more robust error handling or logging here
+            # Consider adding more specific error handling or logging
 
 if __name__ == "__main__":
     main()
