@@ -17,15 +17,15 @@
     </div>
 
     <div id="chat-box" class="flex-1 overflow-y-auto p-4 space-y-4">
-        {% for msg in chat %}
+        {% for msg in chat_history %}
         <div
-            class="max-w-[70%] p-3 rounded-lg whitespace-pre-wrap {% if msg.sender == 'user' %}bg-lime-700 ml-auto{% else %}bg-gray-800{% endif %}">
-            {% if msg.sender == 'user' %}
-            <p>{{ msg.text }}</p>
+            class="max-w-[70%] p-3 rounded-lg whitespace-pre-wrap {% if 'user' in msg %}bg-lime-700 ml-auto{% else %}bg-gray-800{% endif %}">
+            {% if 'user' in msg %}
+            <p>{{ msg.user }}</p>
             {% else %}
-            <div class="prose prose-invert max-w-none">{{ msg.text | safe }}</div>
-            {% if msg.pages %}
-            <p class="text-sm text-lime-300 mt-2">📄 Pages: {{ msg.pages | join(', ') }}</p>
+            <div class="prose prose-invert max-w-none">{{ msg.bot | safe }}</div>
+            {% if msg.references and msg.references.pages %}
+            <p class="text-sm text-lime-300 mt-2">📄 Pages: {{ msg.references.pages | join(', ') }}</p>
             {% endif %}
             {% endif %}
         </div>

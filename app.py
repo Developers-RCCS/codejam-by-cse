@@ -3,6 +3,7 @@ from markdown import markdown
 # Import the main orchestrator agent
 from agents.orchestrator import OrchestratorAgent
 import os # For secret key
+import traceback # Import traceback for detailed error logging
 
 app = Flask(__name__)
 # Use an environment variable or generate a random key for production
@@ -18,22 +19,34 @@ def chat():
 
     if request.method == "POST":
         user_query = request.form["query"]
+        bot_answer_raw = "Sorry, something went wrong." # Default error message
+        references = {"pages": [], "sections": []} # Default empty references
 
-        # Run the orchestrator
-        # Pass Flask session history if needed (adapt format if necessary)
-        # For now, passing empty history to orchestrator, Flask manages its own
-        result = orchestrator.run(query=user_query, chat_history=[]) # Pass empty for now
+        try:
+            # Run the orchestrator
+            print(f"Running orchestrator for query: {user_query}") # Log query
+            result = orchestrator.run(query=user_query, chat_history=[]) # Pass empty for now
+            bot_answer_raw = result["answer"]
+            references = result["references"]
+            print("Orchestrator run successful.") # Log success
+        except Exception as e:
+            # Log the full error traceback to the terminal
+            print(f"❌ Error during orchestrator run for query '{user_query}':")
+            print(traceback.format_exc())
+            # Update the raw answer to show an error message to the user
+            bot_answer_raw = f"Sorry, I encountered an error processing your request. Please check the server logs for details.\n\n*Error: {e}*"
 
-        # Convert markdown answer to HTML
-        bot_answer_html = markdown(result["answer"])
+        # Convert markdown answer to HTML (always happens, even on error)
+        bot_answer_html = markdown(bot_answer_raw)
 
-        # Store interaction in session
+        # Store interaction in session (always happens)
         session["chat_history"].append({
             "user": user_query,
             "bot": bot_answer_html,
-            "references": result["references"] # Store structured references
+            "references": references # Store structured references (might be empty on error)
         })
         session.modified = True # Important!
+        print("Session updated.") # Log session update
 
         return redirect(url_for("chat"))
 
