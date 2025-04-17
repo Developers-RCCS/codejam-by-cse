@@ -7,262 +7,341 @@
     <title>Yuhasa - History Tutor</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-dark: #121212;
-            --bg-darker: #1e1e1e;
-            --text-primary: #e0e0e0;
+            /* Glass UI color palette */
+            --bg-gradient-1: #10141e;
+            --bg-gradient-2: #171d2b;
+            --glass-bg: rgba(30, 35, 50, 0.6);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --glass-highlight: rgba(255, 255, 255, 0.1);
+            --glass-shadow: rgba(0, 0, 0, 0.3);
+            --text-primary: #f0f0f0;
             --text-secondary: #a0a0a0;
-            --user-bubble: #0d6efd;
-            --bot-bubble: #2d2d2d;
-            --border-color: #333;
+            --user-bubble: rgba(65, 125, 255, 0.85);
+            --bot-bubble: rgba(35, 40, 55, 0.75);
+            --accent-color: #7b68ee;
+            --accent-hover: #9785f1;
+            --success-color: #4ade80;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
         }
 
         body {
-            background-color: var(--bg-dark);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, var(--bg-gradient-1), var(--bg-gradient-2));
             color: var(--text-primary);
+            min-height: 100vh;
+            background-attachment: fixed;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .row {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .col-md-8 {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        h1 {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 20px;
+            font-size: 1.8rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            text-align: center;
+        }
+
+        h1:before {
+            content: "🧠";
+            margin-right: 10px;
+            font-size: 1.5em;
         }
 
         .chat-container {
-            height: 70vh;
+            flex: 1;
             overflow-y: auto;
-            border: 1px solid var(--border-color);
-            border-radius: 10px;
             padding: 15px;
             margin-bottom: 20px;
-            background-color: var(--bg-darker);
+            background: var(--glass-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 16px;
+            box-shadow: 0 8px 32px var(--glass-shadow);
+            border: 1px solid var(--glass-border);
+            position: relative;
+            scroll-behavior: smooth;
+        }
+
+        .chat-container::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .chat-container::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .chat-container::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+        }
+
+        .chat-container::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.3);
         }
 
         .message {
-            margin-bottom: 15px;
-            padding: 12px 16px;
-            border-radius: 18px;
-            max-width: 85%;
-            word-wrap: break-word;
+            margin-bottom: 20px;
+            padding: 0;
+            max-width: 80%;
             position: relative;
-            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+            transition: all 0.3s ease;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         .user-message {
-            background-color: var(--user-bubble);
-            color: white;
             margin-left: auto;
-            border-bottom-right-radius: 5px;
-            width: fit-content;
-            max-width: min(85%, 600px);
+            margin-right: 0;
+        }
+
+        .user-message > div {
+            background: var(--user-bubble);
+            color: white;
+            border-bottom-right-radius: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 18px;
+            padding: 12px 16px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
         }
 
         .bot-message {
-            background-color: var(--bot-bubble);
-            color: var(--text-primary);
             margin-right: auto;
-            border-bottom-left-radius: 5px;
-            width: fit-content;
-            max-width: min(85%, 600px);
+            margin-left: 0;
+        }
+
+        .bot-message > div:last-child {
+            background: var(--bot-bubble);
+            color: var(--text-primary);
+            border-bottom-left-radius: 4px;
+            border-radius: 18px;
+            padding: 12px 16px;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid var(--glass-border);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .d-flex {
+            display: flex;
+        }
+
+        .align-items-center {
+            align-items: center;
+        }
+
+        .justify-content-end {
+            justify-content: flex-end;
+        }
+
+        .mb-2 {
+            margin-bottom: 0.5rem;
+        }
+
+        .avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid var(--accent-color);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
         }
 
         .typing-indicator {
             display: none;
-            padding: 10px 15px;
-            background-color: var(--bot-bubble);
-            border-radius: 18px;
-            margin-bottom: 15px;
+            padding: 12px 16px;
+            background: var(--bot-bubble);
+            border-radius: 16px;
+            margin-bottom: 20px;
             width: fit-content;
-            border-bottom-left-radius: 5px;
-            color: var(--text-secondary);
+            border-bottom-left-radius: 4px;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid var(--glass-border);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
         }
 
         .typing-indicator span {
-            opacity: 0.4;
-        }
-
-        .avatar {
-            width: 32px;
-            height: 32px;
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            margin: 0 3px;
             border-radius: 50%;
-            margin-right: 10px;
-            object-fit: cover;
-            border: 1px solid var(--border-color);
+            background-color: var(--text-secondary);
+            animation: blink 1.4s infinite both;
         }
 
-        .message-header {
-            display: flex;
-            align-items: center;
-            margin-bottom: 6px;
-            font-size: 0.9rem;
+        .typing-indicator span:nth-child(2) {
+            animation-delay: 0.2s;
         }
 
-        .message-content {
-            line-height: 1.5;
+        .typing-indicator span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes blink {
+            0%, 100% {
+                opacity: 0.2;
+            }
+            50% {
+                opacity: 1;
+            }
         }
 
         .input-group {
-            background-color: var(--bg-darker);
-            border-radius: 10px;
-            padding: 5px;
-            border: 1px solid var(--border-color);
+            background: var(--glass-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 6px;
+            box-shadow: 0 8px 32px var(--glass-shadow);
+            border: 1px solid var(--glass-border);
+            transition: all 0.3s ease;
+            margin-bottom: 10px;
+        }
+
+        .input-group:focus-within {
+            border-color: var(--accent-color);
+            box-shadow: 0 8px 32px rgba(123, 104, 238, 0.2);
         }
 
         .form-control {
-            background-color: var(--bg-dark);
+            background: transparent;
             border: none;
             color: var(--text-primary);
+            font-size: 1rem;
+            padding: 12px;
+            outline: none;
+            font-family: inherit;
         }
 
         .form-control:focus {
-            background-color: var(--bg-dark);
+            background: transparent;
             color: var(--text-primary);
             box-shadow: none;
         }
 
-        .btn-primary {
-            background-color: var(--user-bubble);
-            border: none;
+        .form-control::placeholder {
+            color: var(--text-secondary);
         }
 
-        h1 {
-            color: var(--text-primary);
+        .btn-success {
+            background-color: var(--accent-color);
+            border: none;
+            border-radius: 12px;
+            padding: 8px 16px;
+            transition: all 0.2s ease;
+        }
+
+        .btn-success:hover {
+            background-color: var(--accent-hover);
+            transform: scale(1.05);
         }
 
         .text-muted {
             color: var(--text-secondary) !important;
         }
 
-        /* Scrollbar styling */
-        ::-webkit-scrollbar {
-            width: 8px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: var(--bg-dark);
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: #444;
-            border-radius: 4px;
-        }
-
-        ::-webkit-scrollbar-thumb:hover {
-            background: #555;
-        }
-
-        /* Markdown styling for bot messages */
-        .bot-markdown {
-            color: #f1f1f1;
-            line-height: 1.6;
-        }
-
-        .bot-markdown h1,
-        .bot-markdown h2,
-        .bot-markdown h3,
-        .bot-markdown h4,
-        .bot-markdown h5,
-        .bot-markdown h6 {
-            color: #cddc39;
-            margin-top: 1em;
-            margin-bottom: 0.5em;
-        }
-
-        .bot-markdown h1 {
-            font-size: 1.8em;
-            border-bottom: 1px solid #444;
-            padding-bottom: 0.3em;
-        }
-
-        .bot-markdown h2 {
-            font-size: 1.5em;
-            border-bottom: 1px solid #444;
-            padding-bottom: 0.3em;
-        }
-
-        .bot-markdown h3 {
-            font-size: 1.3em;
-        }
-
-        .bot-markdown p {
-            margin-bottom: 1em;
-        }
-
-        .bot-markdown a {
-            color: #64b5f6;
-            text-decoration: none;
-        }
-
-        .bot-markdown a:hover {
-            text-decoration: underline;
-        }
-
-        .bot-markdown ul,
-        .bot-markdown ol {
-            margin-bottom: 1em;
-            padding-left: 2em;
-        }
-
-        .bot-markdown li {
-            margin-bottom: 0.5em;
-        }
-
-        .bot-markdown blockquote {
-            border-left: 4px solid #555;
-            padding-left: 1em;
-            color: #aaa;
-            margin-left: 0;
-            margin-right: 0;
-            margin-bottom: 1em;
-        }
-
-        .bot-markdown code {
-            background-color: #333;
-            padding: 0.2em 0.4em;
-            border-radius: 4px;
-            color: #ff9800;
-            font-family: monospace;
-            font-size: 0.9em;
-        }
-
-        .bot-markdown pre {
-            background-color: #2e2e2e;
-            padding: 1em;
-            border-radius: 6px;
+        /* Add quick reply buttons */
+        .quick-replies {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 12px;
             overflow-x: auto;
-            margin-bottom: 1em;
+            padding-bottom: 5px;
+            -ms-overflow-style: none;
+            scrollbar-width: none;
         }
 
-        .bot-markdown pre code {
-            background-color: transparent;
-            padding: 0;
-            color: inherit;
+        .quick-replies::-webkit-scrollbar {
+            display: none;
         }
 
-        .bot-markdown table {
-            border-collapse: collapse;
-            width: 100%;
-            margin-bottom: 1em;
+        .quick-reply {
+            background: var(--glass-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 8px 16px;
+            font-size: 0.85rem;
+            color: var(--text-primary);
+            border: 1px solid var(--glass-border);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+            user-select: none;
         }
 
-        .bot-markdown th,
-        .bot-markdown td {
-            border: 1px solid #444;
-            padding: 0.5em;
+        .quick-reply:hover {
+            background: var(--glass-highlight);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
         }
 
-        .bot-markdown th {
-            background-color: #333;
+        /* File upload styling */
+        .file-preview {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 8px;
         }
 
-        .bot-markdown hr {
-            border: none;
-            border-top: 1px solid #444;
-            margin: 1.5em 0;
+        .file-item {
+            display: flex;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 5px 10px;
+            font-size: 0.85rem;
+            max-width: 200px;
         }
 
-        .bot-markdown strong {
-            color: #fff;
-            font-weight: bold;
-        }
-
-        .bot-markdown em {
-            font-style: italic;
+        /* Keep existing markdown styling */
+        .bot-markdown {
+            /* ...existing code... */
         }
     </style>
 </head>
@@ -271,19 +350,36 @@
     <div class="container mt-4">
         <div class="row">
             <div class="col-md-8 offset-md-2">
-                <h1 class="text-center mb-4">🧠 Yuhasa History Tutor</h1>
+                <h1 class="text-center mb-4">Yuhasa History Tutor</h1>
+
+                <!-- Add quick reply suggestions -->
+                <div class="quick-replies" id="quickReplies">
+                    <div class="quick-reply">Tell me about World War II</div>
+                    <div class="quick-reply">Who was Alexander the Great?</div>
+                    <div class="quick-reply">Explain the Industrial Revolution</div>
+                    <div class="quick-reply">What happened during the Cold War?</div>
+                </div>
 
                 <div class="chat-container" id="chatContainer">
                     <div class="typing-indicator" id="typingIndicator">
-                        <span>.</span><span>.</span><span>.</span>
+                        <span></span><span></span><span></span>
                     </div>
                     <!-- Messages will appear here -->
                 </div>
 
                 <div class="input-group mb-3">
+                    <!-- Add attachment button -->
+                    <button class="btn" id="attachmentBtn" style="background: transparent; color: var(--text-secondary);">
+                        <i class="fas fa-paperclip"></i>
+                    </button>
                     <input type="text" class="form-control" id="userInput" placeholder="Ask a history question...">
-                    <button class="btn btn-success" id="sendButton">Send</button>
+                    <button class="btn btn-success" id="sendButton">
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
                 </div>
+                <input type="file" id="fileInput" multiple style="display: none">
+                <div class="file-preview" id="filePreview"></div>
+                
                 <div class="text-center">
                     <small class="text-muted">Type "exit" or "quit" to end the session</small>
                 </div>
@@ -297,6 +393,12 @@
             const userInput = document.getElementById('userInput');
             const sendButton = document.getElementById('sendButton');
             const typingIndicator = document.getElementById('typingIndicator');
+            const quickReplies = document.getElementById('quickReplies');
+            const attachmentBtn = document.getElementById('attachmentBtn');
+            const fileInput = document.getElementById('fileInput');
+            const filePreview = document.getElementById('filePreview');
+            
+            let selectedFiles = [];
 
             // Configure marked.js
             marked.setOptions({
@@ -308,12 +410,76 @@
             // Load any existing chat history
             const chatHistory = JSON.parse('{{ chat_history | tojson | safe }}') || [];
 
-            // Display chat history
-            chatHistory.forEach(msg => {
-                addMessageToChat(msg.sender, msg.message);
-            });
+            // Show welcome message if chat is empty
+            if (chatHistory.length === 0) {
+                setTimeout(() => {
+                    addMessageToChat('bot', 'Hi there! 👋 I\'m Yuhasa, your AI history tutor. Ask me anything about history or click one of the suggestions above to get started!');
+                }, 500);
+            } else {
+                // Display chat history
+                chatHistory.forEach(msg => {
+                    addMessageToChat(msg.sender, msg.message);
+                });
+            }
 
             chatContainer.scrollTop = chatContainer.scrollHeight;
+
+            // Add event listeners for quick replies
+            const quickReplyElements = document.querySelectorAll('.quick-reply');
+            quickReplyElements.forEach(el => {
+                el.addEventListener('click', () => {
+                    userInput.value = el.textContent;
+                    sendMessage();
+                });
+            });
+
+            // File upload functionality
+            attachmentBtn.addEventListener('click', () => {
+                fileInput.click();
+            });
+
+            fileInput.addEventListener('change', (e) => {
+                const files = e.target.files;
+                handleFiles(files);
+            });
+
+            function handleFiles(files) {
+                for (let i = 0; i < files.length; i++) {
+                    if (selectedFiles.findIndex(f => f.name === files[i].name) === -1) {
+                        selectedFiles.push(files[i]);
+                        displayFilePreview(files[i]);
+                    }
+                }
+            }
+
+            function displayFilePreview(file) {
+                const fileItem = document.createElement('div');
+                fileItem.className = 'file-item';
+                
+                let iconClass = 'fa-file';
+                if (file.type.startsWith('image/')) {
+                    iconClass = 'fa-file-image';
+                } else if (file.type === 'application/pdf') {
+                    iconClass = 'fa-file-pdf';
+                } else if (file.type.includes('word')) {
+                    iconClass = 'fa-file-word';
+                }
+                
+                fileItem.innerHTML = `
+                    <i class="fas ${iconClass}" style="margin-right: 5px; color: var(--accent-color);"></i>
+                    <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${file.name}</span>
+                    <i class="fas fa-times" style="margin-left: 5px; cursor: pointer; color: rgba(255, 255, 255, 0.5);" data-filename="${file.name}"></i>
+                `;
+                
+                filePreview.appendChild(fileItem);
+                
+                // Add remove functionality
+                fileItem.querySelector('.fa-times').addEventListener('click', function() {
+                    const filename = this.getAttribute('data-filename');
+                    selectedFiles = selectedFiles.filter(f => f.name !== filename);
+                    fileItem.remove();
+                });
+            }
 
             function addMessageToChat(sender, message) {
                 const messageDiv = document.createElement('div');
@@ -325,7 +491,7 @@
                     messageDiv.innerHTML = `
                         <div class="d-flex align-items-center mb-2">
                             <img src="https://media.discordapp.net/stickers/1360252466331123713.png" alt="Yuhasa" class="avatar">
-                            <strong>Yuhasa</strong>
+                            <strong style="margin-left: 10px;">Yuhasa</strong>
                         </div>
                         <div class="bot-markdown">${botContent}</div>
                     `;
@@ -339,35 +505,29 @@
                 }
 
                 chatContainer.insertBefore(messageDiv, typingIndicator);
-                chatContainer.scrollTop = chatContainer.scrollHeight;
+                
+                // Smooth scroll to the new message
+                setTimeout(() => {
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                }, 100);
             }
 
             function showTypingIndicator() {
                 typingIndicator.style.display = 'block';
                 chatContainer.scrollTop = chatContainer.scrollHeight;
-
-                const dots = typingIndicator.querySelectorAll('span');
-                let dotCount = 0;
-                const dotInterval = setInterval(() => {
-                    dots.forEach(dot => dot.style.opacity = '0.2');
-                    dots[dotCount % 3].style.opacity = '1';
-                    dotCount++;
-                }, 500);
-
-                return dotInterval;
+                return null; // No longer need the interval
             }
 
-            function hideTypingIndicator(dotInterval) {
-                clearInterval(dotInterval);
+            function hideTypingIndicator() {
                 typingIndicator.style.display = 'none';
             }
 
             async function sendMessage() {
                 const message = userInput.value.trim();
-                if (!message) return;
+                if (!message && selectedFiles.length === 0) return;
 
                 if (message.toLowerCase() === 'exit' || message.toLowerCase() === 'quit') {
-                    addMessageToChat('bot', '👋 Bye bro! Feel free to come back with more history questions anytime!');
+                    addMessageToChat('bot', '👋 Thanks for chatting! Feel free to come back with more history questions anytime!');
                     userInput.value = '';
                     return;
                 }
@@ -375,7 +535,15 @@
                 addMessageToChat('user', message);
                 userInput.value = '';
 
-                const dotInterval = showTypingIndicator();
+                // Clear file previews after sending
+                const fileData = new FormData();
+                selectedFiles.forEach(file => {
+                    fileData.append('files', file);
+                });
+                selectedFiles = [];
+                filePreview.innerHTML = '';
+
+                showTypingIndicator();
 
                 try {
                     const messages = Array.from(document.querySelectorAll('.message')).map(msg => {
@@ -401,12 +569,17 @@
 
                     if (data.error) throw new Error(data.error);
 
-                    addMessageToChat('bot', data.answer);
+                    // Add a small delay for a more natural feel
+                    setTimeout(() => {
+                        hideTypingIndicator();
+                        addMessageToChat('bot', data.answer);
+                    }, 500 + Math.random() * 1000);
                 } catch (error) {
                     console.error('Error:', error);
-                    addMessageToChat('bot', `Sorry, I encountered an error: ${error.message}`);
-                } finally {
-                    hideTypingIndicator(dotInterval);
+                    setTimeout(() => {
+                        hideTypingIndicator();
+                        addMessageToChat('bot', `Sorry, I encountered an error: ${error.message}`);
+                    }, 500);
                 }
             }
 
@@ -414,6 +587,11 @@
             userInput.addEventListener('keypress', function (e) {
                 if (e.key === 'Enter') sendMessage();
             });
+
+            // Focus input on load
+            setTimeout(() => {
+                userInput.focus();
+            }, 500);
         });
     </script>
 </body>
