@@ -1,77 +1,421 @@
 <!DOCTYPE html>
-<html lang="en" class="bg-gray-900 text-white">
+<html lang="en">
 
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>RaviBot 💬</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Yuhasa - History Tutor</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        :root {
+            --bg-dark: #121212;
+            --bg-darker: #1e1e1e;
+            --text-primary: #e0e0e0;
+            --text-secondary: #a0a0a0;
+            --user-bubble: #0d6efd;
+            --bot-bubble: #2d2d2d;
+            --border-color: #333;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-primary);
+        }
+
+        .chat-container {
+            height: 70vh;
+            overflow-y: auto;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            background-color: var(--bg-darker);
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 12px 16px;
+            border-radius: 18px;
+            max-width: 85%;
+            word-wrap: break-word;
+            position: relative;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+        }
+
+        .user-message {
+            background-color: var(--user-bubble);
+            color: white;
+            margin-left: auto;
+            border-bottom-right-radius: 5px;
+            width: fit-content;
+            max-width: min(85%, 600px);
+        }
+
+        .bot-message {
+            background-color: var(--bot-bubble);
+            color: var(--text-primary);
+            margin-right: auto;
+            border-bottom-left-radius: 5px;
+            width: fit-content;
+            max-width: min(85%, 600px);
+        }
+
+        .typing-indicator {
+            display: none;
+            padding: 10px 15px;
+            background-color: var(--bot-bubble);
+            border-radius: 18px;
+            margin-bottom: 15px;
+            width: fit-content;
+            border-bottom-left-radius: 5px;
+            color: var(--text-secondary);
+        }
+
+        .typing-indicator span {
+            opacity: 0.4;
+        }
+
+        .avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            margin-right: 10px;
+            object-fit: cover;
+            border: 1px solid var(--border-color);
+        }
+
+        .message-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 6px;
+            font-size: 0.9rem;
+        }
+
+        .message-content {
+            line-height: 1.5;
+        }
+
+        .input-group {
+            background-color: var(--bg-darker);
+            border-radius: 10px;
+            padding: 5px;
+            border: 1px solid var(--border-color);
+        }
+
+        .form-control {
+            background-color: var(--bg-dark);
+            border: none;
+            color: var(--text-primary);
+        }
+
+        .form-control:focus {
+            background-color: var(--bg-dark);
+            color: var(--text-primary);
+            box-shadow: none;
+        }
+
+        .btn-primary {
+            background-color: var(--user-bubble);
+            border: none;
+        }
+
+        h1 {
+            color: var(--text-primary);
+        }
+
+        .text-muted {
+            color: var(--text-secondary) !important;
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-dark);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+
+        /* Markdown styling for bot messages */
+        .bot-markdown {
+            color: #f1f1f1;
+            line-height: 1.6;
+        }
+
+        .bot-markdown h1,
+        .bot-markdown h2,
+        .bot-markdown h3,
+        .bot-markdown h4,
+        .bot-markdown h5,
+        .bot-markdown h6 {
+            color: #cddc39;
+            margin-top: 1em;
+            margin-bottom: 0.5em;
+        }
+
+        .bot-markdown h1 {
+            font-size: 1.8em;
+            border-bottom: 1px solid #444;
+            padding-bottom: 0.3em;
+        }
+
+        .bot-markdown h2 {
+            font-size: 1.5em;
+            border-bottom: 1px solid #444;
+            padding-bottom: 0.3em;
+        }
+
+        .bot-markdown h3 {
+            font-size: 1.3em;
+        }
+
+        .bot-markdown p {
+            margin-bottom: 1em;
+        }
+
+        .bot-markdown a {
+            color: #64b5f6;
+            text-decoration: none;
+        }
+
+        .bot-markdown a:hover {
+            text-decoration: underline;
+        }
+
+        .bot-markdown ul,
+        .bot-markdown ol {
+            margin-bottom: 1em;
+            padding-left: 2em;
+        }
+
+        .bot-markdown li {
+            margin-bottom: 0.5em;
+        }
+
+        .bot-markdown blockquote {
+            border-left: 4px solid #555;
+            padding-left: 1em;
+            color: #aaa;
+            margin-left: 0;
+            margin-right: 0;
+            margin-bottom: 1em;
+        }
+
+        .bot-markdown code {
+            background-color: #333;
+            padding: 0.2em 0.4em;
+            border-radius: 4px;
+            color: #ff9800;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+
+        .bot-markdown pre {
+            background-color: #2e2e2e;
+            padding: 1em;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin-bottom: 1em;
+        }
+
+        .bot-markdown pre code {
+            background-color: transparent;
+            padding: 0;
+            color: inherit;
+        }
+
+        .bot-markdown table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-bottom: 1em;
+        }
+
+        .bot-markdown th,
+        .bot-markdown td {
+            border: 1px solid #444;
+            padding: 0.5em;
+        }
+
+        .bot-markdown th {
+            background-color: #333;
+        }
+
+        .bot-markdown hr {
+            border: none;
+            border-top: 1px solid #444;
+            margin: 1.5em 0;
+        }
+
+        .bot-markdown strong {
+            color: #fff;
+            font-weight: bold;
+        }
+
+        .bot-markdown em {
+            font-style: italic;
+        }
+    </style>
 </head>
 
-<body class="h-screen flex flex-col font-sans">
+<body>
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-md-8 offset-md-2">
+                <h1 class="text-center mb-4">🧠 Yuhasa History Tutor</h1>
 
-    <!-- Header -->
-    <div class="p-4 bg-gray-800 flex justify-between items-center shadow-md">
-        <h1 class="text-2xl font-bold text-lime-400">🧠 RaviBot - History Chat</h1>
-        <button onclick="clearChat()"
-            class="text-sm border border-gray-500 px-3 py-1 rounded hover:text-white text-gray-300">
-            🗑 Clear Chat
-        </button>
+                <div class="chat-container" id="chatContainer">
+                    <div class="typing-indicator" id="typingIndicator">
+                        <span>.</span><span>.</span><span>.</span>
+                    </div>
+                    <!-- Messages will appear here -->
+                </div>
+
+                <div class="input-group mb-3">
+                    <input type="text" class="form-control" id="userInput" placeholder="Ask a history question...">
+                    <button class="btn btn-success" id="sendButton">Send</button>
+                </div>
+                <div class="text-center">
+                    <small class="text-muted">Type "exit" or "quit" to end the session</small>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <!-- Chat window -->
-    <div id="chat" class="flex-1 overflow-y-auto p-4 space-y-4"></div>
-
-    <!-- Message input form -->
-    <form method="POST" class="p-4 bg-gray-800 flex gap-2">
-        <input name="query" id="query" autocomplete="off" placeholder="Ask RaviBot a question..."
-            class="flex-1 p-2 rounded bg-gray-700 text-white placeholder-gray-400 outline-none" />
-        <button type="submit" class="bg-lime-600 hover:bg-lime-500 px-4 py-2 rounded text-white">
-            Send
-        </button>
-    </form>
-
-    <!-- Script: chat memory & restore -->
     <script>
-        const chatContainer = document.getElementById("chat");
-        const form = document.querySelector("form");
-        const queryInput = document.getElementById("query");
+        document.addEventListener('DOMContentLoaded', function () {
+            const chatContainer = document.getElementById('chatContainer');
+            const userInput = document.getElementById('userInput');
+            const sendButton = document.getElementById('sendButton');
+            const typingIndicator = document.getElementById('typingIndicator');
 
-        // Load saved messages
-        const messages = JSON.parse(localStorage.getItem("ravibot-chat") || "[]");
-
-        function renderMessages() {
-            chatContainer.innerHTML = "";
-            messages.forEach(msg => {
-                const div = document.createElement("div");
-                div.className = `max-w-[70%] p-3 rounded-lg whitespace-pre-wrap ${msg.sender === "user" ? "bg-lime-700 ml-auto" : "bg-gray-800"
-                    }`;
-                div.innerHTML = `<p>${msg.text}</p>`;
-                if (msg.pages) {
-                    div.innerHTML += `<p class="text-sm text-lime-300 mt-2">📄 Pages: ${msg.pages.join(", ")}</p>`;
-                }
-                chatContainer.appendChild(div);
+            // Configure marked.js
+            marked.setOptions({
+                breaks: true,
+                gfm: true,
+                smartypants: true
             });
+
+            // Load any existing chat history
+            const chatHistory = JSON.parse('{{ chat_history | tojson | safe }}') || [];
+
+            // Display chat history
+            chatHistory.forEach(msg => {
+                addMessageToChat(msg.sender, msg.message);
+            });
+
             chatContainer.scrollTop = chatContainer.scrollHeight;
-        }
 
-        renderMessages();
+            function addMessageToChat(sender, message) {
+                const messageDiv = document.createElement('div');
+                messageDiv.classList.add('message');
+                messageDiv.classList.add(sender === 'user' ? 'user-message' : 'bot-message');
 
-        form.addEventListener("submit", () => {
-            const userInput = queryInput.value.trim();
-            if (!userInput) return;
+                if (sender === 'bot') {
+                    const botContent = marked.parse(message);
+                    messageDiv.innerHTML = `
+                        <div class="d-flex align-items-center mb-2">
+                            <img src="https://media.discordapp.net/stickers/1360252466331123713.png" alt="Yuhasa" class="avatar">
+                            <strong>Yuhasa</strong>
+                        </div>
+                        <div class="bot-markdown">${botContent}</div>
+                    `;
+                } else {
+                    messageDiv.innerHTML = `
+                        <div class="d-flex align-items-center justify-content-end mb-2">
+                            <strong>You</strong>
+                        </div>
+                        <div>${message}</div>
+                    `;
+                }
 
-            // Save user question
-            messages.push({ sender: "user", text: userInput });
-            localStorage.setItem("ravibot-chat", JSON.stringify(messages));
+                chatContainer.insertBefore(messageDiv, typingIndicator);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
+
+            function showTypingIndicator() {
+                typingIndicator.style.display = 'block';
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+
+                const dots = typingIndicator.querySelectorAll('span');
+                let dotCount = 0;
+                const dotInterval = setInterval(() => {
+                    dots.forEach(dot => dot.style.opacity = '0.2');
+                    dots[dotCount % 3].style.opacity = '1';
+                    dotCount++;
+                }, 500);
+
+                return dotInterval;
+            }
+
+            function hideTypingIndicator(dotInterval) {
+                clearInterval(dotInterval);
+                typingIndicator.style.display = 'none';
+            }
+
+            async function sendMessage() {
+                const message = userInput.value.trim();
+                if (!message) return;
+
+                if (message.toLowerCase() === 'exit' || message.toLowerCase() === 'quit') {
+                    addMessageToChat('bot', '👋 Bye bro! Feel free to come back with more history questions anytime!');
+                    userInput.value = '';
+                    return;
+                }
+
+                addMessageToChat('user', message);
+                userInput.value = '';
+
+                const dotInterval = showTypingIndicator();
+
+                try {
+                    const messages = Array.from(document.querySelectorAll('.message')).map(msg => {
+                        const isUser = msg.classList.contains('user-message');
+                        return {
+                            sender: isUser ? 'user' : 'bot',
+                            message: msg.querySelector('div:last-child').textContent
+                        };
+                    });
+
+                    const response = await fetch('/ask', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            query: message,
+                            chat_history: messages
+                        })
+                    });
+
+                    const data = await response.json();
+
+                    if (data.error) throw new Error(data.error);
+
+                    addMessageToChat('bot', data.answer);
+                } catch (error) {
+                    console.error('Error:', error);
+                    addMessageToChat('bot', `Sorry, I encountered an error: ${error.message}`);
+                } finally {
+                    hideTypingIndicator(dotInterval);
+                }
+            }
+
+            sendButton.addEventListener('click', sendMessage);
+            userInput.addEventListener('keypress', function (e) {
+                if (e.key === 'Enter') sendMessage();
+            });
         });
-
-        function clearChat() {
-            localStorage.removeItem("ravibot-chat");
-            location.reload();
-        }
     </script>
-
 </body>
 
 </html>
