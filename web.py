@@ -6,6 +6,9 @@ from gemini_utils import embed_text, setup_gemini
 import os
 from datetime import datetime
 import json
+import time
+import functools
+import google.generativeai as genai # Ensure this is imported
 
 app = Flask(__name__)
 app.secret_key = 'dj89we923n7yr27y4x74y8x634txb6fx763t4x763tn47s6326st6s7t26nn73n6'
@@ -26,6 +29,7 @@ gemini = setup_gemini()
 if not os.path.exists('chats'):
     os.makedirs('chats')
 
+@functools.lru_cache(maxsize=128)
 def search_chunks(query, top_k=300):
     query_embedding = np.array(embed_text(query), dtype="float32").reshape(1, -1)
     D, I = index.search(query_embedding, top_k)
@@ -92,7 +96,22 @@ In case some relevant details are spread across multiple pages, try to combine t
 
 def generate_answer(query, context_chunks, chat_history=None):
     prompt = reasoning_agent(query, context_chunks, chat_history)
-    response = gemini.generate_content(prompt)
+    
+    # --- Add Generation Config ---
+    generation_config = genai.types.GenerationConfig(
+        # candidate_count=1, # Default is 1
+        # stop_sequences=None,
+        # max_output_tokens=2048, # Adjust if needed, but Flash default is generous (8192)
+        temperature=0.2, # Lower temperature for more focused, potentially faster responses
+        # top_p=None,
+        # top_k=None,
+    )
+    # ---------------------------
+
+    response = gemini.generate_content(
+        prompt,
+        generation_config=generation_config # Pass the config here
+    )
     return response.text.strip()
 
 def save_chat_history(user_id, messages):
@@ -121,6 +140,8 @@ def home():
 
 @app.route('/ask', methods=['POST'])
 def ask():
+    start_time = time.time() # Start total time measurement
+
     if 'user_id' not in session:
         return jsonify({'error': 'Session expired'}), 401
     
@@ -133,9 +154,18 @@ def ask():
     # Get chat history from request or session
     chat_history = data.get('chat_history', [])
     
-    # Process the query
-    chunks = search_chunks(query)
-    answer = generate_answer(query, chunks)
+    # --- Profiling Retrieval ---
+    retrieval_start = time.time()
+    # Process the query - Reduce top_k significantly for testing
+    chunks = search_chunks(query, top_k=5) # Start with a smaller top_k
+    retrieval_time = time.time() - retrieval_start
+    # --------------------------
+
+    # --- Profiling Generation ---
+    generation_start = time.time()
+    answer = generate_answer(query, chunks, chat_history) # Pass chat_history here
+    generation_time = time.time() - generation_start
+    # --------------------------
     
     # Update chat history
     chat_history.append({'sender': 'user', 'message': query})
@@ -143,6 +173,15 @@ def ask():
     
     # Save the updated chat history
     save_chat_history(session['user_id'], chat_history)
+
+    total_time = time.time() - start_time # End total time measurement
+
+    # --- Logging Timings ---
+    print(f"Query: '{query}'")
+    print(f"  Retrieval Time (top_k={len(chunks)}): {retrieval_time:.4f}s")
+    print(f"  Generation Time: {generation_time:.4f}s")
+    print(f"  Total Request Time: {total_time:.4f}s")
+    # -----------------------
     
     return jsonify({
         'answer': answer,
