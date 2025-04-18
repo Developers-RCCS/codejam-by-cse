@@ -5,6 +5,8 @@ import faiss
 import numpy as np
 import pickle
 from gemini_utils import embed_text, setup_gemini
+from typing import TypedDict, List, Dict, Optional
+from langgraph.graph import StateGraph, END
 
 # Initialize Gemini + FAISS
 gemini = setup_gemini()
@@ -14,6 +16,22 @@ with open("faiss_metadata.pkl", "rb") as f:
 
 texts = metadata["texts"]
 metadatas = metadata["metadatas"]
+
+# Define the state structure for the LangGraph
+class AgentState(TypedDict):
+    initial_query: str
+    analyzed_query: Optional[Dict] # Output from QueryAnalyzerAgent
+    retrieved_documents: List[Dict] # Chunks from RetrieverAgent
+    intermediate_results: Dict # For storing temporary data between steps
+    raw_answer: str # Initial answer from GeneratorAgent
+    formatted_answer: str # Final answer post-processing
+    references: Dict # Structured references (e.g., {"pages": [...]})
+    context_used: List[Dict] # Specific context snippets used for the final answer
+    fact_check_passed: Optional[bool]
+    chat_history: List[Dict] # To store conversation history
+
+# Initialize the LangGraph
+workflow = StateGraph(AgentState)
 
 app = FastAPI()
 
@@ -53,11 +71,51 @@ Answer:"""
 @app.post("/ask")
 async def ask_bot(request: QueryRequest):
     query = request.query
-    chunks = search_chunks(query)
-    answer = generate_answer(query, chunks)
-    pages = list(set([c["page"] for c in chunks]))
+    
+    try:
+        # Import workflow here to avoid circular imports
+        from graph import workflow
+        
+        # Initialize the state with the user query
+        initial_state = {
+            "initial_query": query,
+            "analyzed_query": None,
+            "retrieved_documents": [],
+            "intermediate_results": {},
+            "raw_answer": "",
+            "formatted_answer": "",
+            "references": {"pages": []},
+            "context_used": [],
+            "fact_check_passed": None,
+            "chat_history": []
+        }
+        
+        # Run the workflow with the initial state
+        result = workflow.invoke(initial_state)
+        
+        # Use existing search and generate functions as fallback
+        # This will be replaced as we implement more nodes in the graph
+        chunks = search_chunks(query)
+        answer = generate_answer(query, chunks)
+        pages = list(set([c["page"] for c in chunks]))
+        
+        # Print out the analyzed query from the workflow for debugging
+        print("Query Analysis:", result.get("analyzed_query"))
 
-    return {
-        "answer": answer,
-        "pages": pages
-    }
+        return {
+            "answer": answer,
+            "pages": pages,
+            # Include analysis information in response
+            "analysis": result.get("analyzed_query", {})
+        }
+    except Exception as e:
+        # Fallback to original implementation if the graph fails
+        print(f"LangGraph workflow error: {e}")
+        chunks = search_chunks(query)
+        answer = generate_answer(query, chunks)
+        pages = list(set([c["page"] for c in chunks]))
+
+        return {
+            "answer": answer,
+            "pages": pages
+        }
