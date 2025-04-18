@@ -73,7 +73,6 @@ There seem to be multiple ways to interact with the chatbot:
 *   `pdf_chunker.py`: Responsible for reading and splitting the PDF document.
 *   `agents/`: Directory containing different components (agents) of the RAG pipeline (Retriever, Generator, Orchestrator, etc.).
 *   `templates/index.html`: The HTML structure for the web interface.
-*   `static/`: Contains CSS and JS for the web interface.
 *   `chats/`: Stores conversation history (JSON files).
 *   `grade-11-history-text-book.pdf`: The source document.
 *   `faiss_index.index`, `faiss_metadata.pkl`: The generated vector store files.
