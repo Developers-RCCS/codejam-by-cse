@@ -571,6 +571,11 @@
              .menu-toggle-button { display: none; } /* Hide on desktop */
         }
 
+        .mic-button.listening {
+            background-color: rgba(255, 0, 0, 0.2); /* Reddish glow when listening */
+            color: #ff8080; /* Lighter red icon */
+        }
+
         /* Focus ring for accessibility */
         .input-wrapper:focus-within,
         .send-button:focus,
@@ -818,6 +823,76 @@
                 }
             }
 
+            // --- Speech Recognition (Web Speech API) ---
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            let recognition;
+
+            if (SpeechRecognition) {
+                recognition = new SpeechRecognition();
+                recognition.continuous = false; // Capture a single utterance
+                recognition.lang = 'en-US';
+                recognition.interimResults = false;
+                recognition.maxAlternatives = 1;
+
+                // Event handler for when speech is recognized
+                recognition.onresult = (event) => {
+                    const transcript = event.results[0][0].transcript;
+                    userInput.value = transcript; // Populate the input field
+                    autoResizeTextarea(); // Adjust textarea height
+                    // Optional: Automatically send the message after transcription
+                    // sendMessage();
+                };
+
+                // Event handler for speech recognition errors
+                recognition.onerror = (event) => {
+                    console.error('Speech recognition error:', event.error);
+                    let errorMessage = 'Sorry, I couldn\'t understand that.';
+                    if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+                        errorMessage = 'Microphone access denied. Please allow microphone permission in your browser settings.';
+                    } else if (event.error === 'no-speech') {
+                        errorMessage = 'I didn\'t hear anything. Please try again.';
+                    }
+                    alert(`Voice Input Error: ${errorMessage}`);
+                    micButton.classList.remove('listening'); // Remove visual feedback on error
+                };
+
+                // Event handler for when recognition starts
+                recognition.onstart = () => {
+                    micButton.classList.add('listening'); // Add visual feedback
+                    micButton.title = "Listening... Click to stop";
+                };
+
+                // Event handler for when recognition ends
+                recognition.onend = () => {
+                    micButton.classList.remove('listening'); // Remove visual feedback
+                    micButton.title = "Voice Input";
+                };
+
+                // Modify the micButton click listener
+                micButton.addEventListener('click', () => {
+                    if (micButton.classList.contains('listening')) {
+                        recognition.stop(); // Allow stopping manually
+                    } else {
+                        try {
+                            recognition.start();
+                        } catch (e) {
+                            console.error("Error starting recognition:", e);
+                            alert("Could not start voice input. Please ensure microphone permissions are granted.");
+                            micButton.classList.remove('listening');
+                        }
+                    }
+                });
+
+            } else {
+                // Handle browsers that don't support SpeechRecognition
+                micButton.addEventListener('click', () => {
+                    alert('Sorry, your browser doesn\'t support voice input. Try Chrome or Edge.');
+                });
+                micButton.disabled = true; // Disable the button if not supported
+                micButton.title = "Voice input not supported in this browser";
+            }
+            // --- End Speech Recognition ---
+
             // --- Event Listeners ---
             sendButton.addEventListener('click', sendMessage);
             userInput.addEventListener('keypress', function (e) {
@@ -830,9 +905,7 @@
             attachmentButton.addEventListener('click', () => {
                 alert('Attachment functionality is not yet implemented.');
             });
-            micButton.addEventListener('click', () => {
-                alert('Voice input functionality is not yet implemented.');
-            });
+
             speakerButton.addEventListener('click', () => {
                 alert('Text-to-speech functionality is not yet implemented.');
             });
