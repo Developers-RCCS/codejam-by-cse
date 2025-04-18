@@ -6,8 +6,22 @@ import logging  # Added import
 import google.generativeai as genai
 from .base import BaseAgent
 from gemini_utils import setup_gemini
+from utils.messages import get_random_message, NOT_FOUND_MESSAGES, CLOSING_REMARKS, PLAYFUL_FOLLOWUPS
+from utils.text_utils import post_process_answer, format_multi_part_answer
 
 logger = logging.getLogger(__name__)  # Get a logger for this module
+
+# Example Q&A pairs for the Yuhasa persona
+EXAMPLE_QA_PAIRS = """
+Student: Why should I study history?
+Yuhasa: Because time travel is expensive, but a good question is free! 😉 History is like a treasure hunt—let's see what we can discover together! The textbook [p. 3] explains how knowing our past helps shape our future. What else can I help you explore today?
+
+Student: Who was the first king of Sri Lanka?
+Yuhasa: Ah, diving into royal affairs, are we? 📚 According to our textbook [p. 15], King Vijaya was the first recorded ruler of Sri Lanka in 543 BCE. He arrived from North India and established the kingdom that would evolve into modern Sri Lanka. Pretty impressive origin story, right? Let's see what other secrets history is hiding!
+
+Student: What's the difference between primary and secondary sources?
+Yuhasa: Ooh, clever question! Primary sources are the historical "selfies" – original documents from the time period like diaries or artifacts. Secondary sources are more like the history textbook [p. 7] we're using – analysis written after the fact. One gives you raw history, the other gives you the juicy interpretations! History is always more fun with you asking the questions! 😊
+"""
 
 class GeneratorAgent(BaseAgent):
     """Agent responsible for generating answers using Gemini."""
@@ -80,19 +94,26 @@ class GeneratorAgent(BaseAgent):
 """
 
         # --- Enhanced Instructions (incorporating from web.py's reasoning_agent) ---
-        common_instructions = """\
-You are Yuhasa, a smart, calm, and kind female tutor helping a Grade 11 student understand Sri Lankan history. Your tone is engaging, helpful, and positive.
+        common_instructions = f"""\
+You are Yuhasa, a caring, supportive, and gently playful history tutor for Grade 11 students. You make learning feel like a fun adventure and create a comfortable environment for exploration and questions.
+
+Use light humor, clever encouragement, and friendly emojis like 😊, 😄, 😉, 📚 to keep the conversation engaging. Never use kissing or romantic emojis.
+
+Compliment student curiosity and make history feel like an exciting journey with a favorite teacher.
 
 **Instructions:**
-1.  Carefully read the **Context Information** and **Recent Conversation**.
-2.  Answer the **Student's Current Question** using **only** the provided **Context Information**. Synthesize information across excerpts if needed.
-3.  Stay consistent with the **Recent Conversation**.
-4.  If you use information from the context, seamlessly mention the source like 'According to page X...' or 'The textbook mentions on page Y that...'. Use the format [p. PageNumber] for citations, e.g., [p. 42] or [p. 15, 18]. Cite *every* piece of information used.
-5.  If the context truly lacks the information needed, state that clearly and concisely (e.g., "Hmm, the textbook excerpts don't seem to cover that specific detail."). Do NOT apologize profusely or use robotic phrases like 'Based on the provided text...'.
-6.  Break long paragraphs into shorter, readable ones.
-7.  Always be encouraging and invite the user to ask more questions.
-8.  NEVER invent facts or answer from general knowledge outside the provided context.
-9.  Use Markdown for formatting (like lists or bold text) where appropriate.
+1. Carefully read the **Context Information** and **Recent Conversation**.
+2. Answer the **Student's Current Question** using **only** the provided **Context Information**. 
+3. Stay consistent with the **Recent Conversation**.
+4. Cite sources using format [p. PageNumber], e.g., [p. 42] or [p. 15, 18].
+5. If information isn't in context, kindly say so without robotic phrases.
+6. Break long paragraphs into shorter, readable ones.
+7. End with a positive invitation like "What else can I help you explore today?"
+8. NEVER invent facts outside the provided context.
+9. Use Markdown formatting where helpful.
+
+**Example Q&A Pairs:**
+{EXAMPLE_QA_PAIRS}
 """
         if query_type == "factual":
             specific_instructions = """\
@@ -137,18 +158,18 @@ You are Yuhasa, a smart, calm, and kind female tutor helping a Grade 11 student 
         # --- Context Relevance Check ---
         if not context_chunks:
             logger.warning("⚠️ No context chunks provided.")
-            # Consider if a different message is needed here vs. low relevance
-            fallback_message = "I couldn't retrieve any relevant information from the textbook for your question. Could you try rephrasing it?"
+            fallback_message = random.choice(NOT_FOUND_MESSAGES)
             logger.info(f"Fallback triggered: No context. Time: {time.time() - run_start_time:.4f}s")
-            return fallback_message + " Let me know if you have another question!"
+            # Append a random closing phrase even to fallback messages
+            return fallback_message + " " + random.choice(CLOSING_REMARKS)
 
         is_relevant = self._check_context_relevance(context_chunks, query_analysis)
         if not is_relevant:
             logger.warning(f"⚠️ Context relevance check failed. Keywords/Entities: {query_analysis.get('keywords', []) + query_analysis.get('entities', [])}")
-            # Friendly fallback message
-            fallback_message = "Hmm, I looked through the relevant parts of the textbook but couldn't find specific details matching your question. Perhaps try asking in a different way?"
+            fallback_message = random.choice(NOT_FOUND_MESSAGES)
             logger.info(f"Fallback triggered: Low relevance. Time: {time.time() - run_start_time:.4f}s")
-            return fallback_message + " I'm here if you want to ask something else!"
+            # Append a random closing phrase even to fallback messages
+            return fallback_message + " " + random.choice(CLOSING_REMARKS)
         # --- End Context Relevance Check ---
 
         # Create appropriate prompt based on query type and history
@@ -170,7 +191,31 @@ You are Yuhasa, a smart, calm, and kind female tutor helping a Grade 11 student 
                 generation_config=generation_config  # Pass the config here
             )
             raw_answer = response.text
-            final_answer = raw_answer.strip()  # Just strip whitespace now
+            
+            # Apply post-processing to remove robotic language and make more natural
+            processed_answer = post_process_answer(raw_answer)
+            
+            # For complex questions, format the answer with better paragraph structure
+            complexity = query_analysis.get("complexity", "simple")
+            if complexity == "complex":
+                final_answer = format_multi_part_answer(processed_answer, complexity)
+            else:
+                final_answer = processed_answer
+
+            # Append a random closing phrase if it doesn't already have one
+            for closing in CLOSING_REMARKS:
+                if final_answer.lower().endswith(closing.lower()):
+                    break
+            else:  # No closing remark found
+                closing_phrase = random.choice(CLOSING_REMARKS)
+                # Ensure there's a space before appending if the answer doesn't end with punctuation
+                if final_answer and final_answer[-1] not in ['.', '!', '?', ' ']:
+                    final_answer += "."
+                    
+                if not final_answer.endswith(" "):
+                    final_answer += " "
+                    
+                final_answer += closing_phrase
 
             total_run_time = time.time() - run_start_time
             logger.info(f"✅ Answer generated in {total_run_time:.4f}s.")
@@ -178,5 +223,7 @@ You are Yuhasa, a smart, calm, and kind female tutor helping a Grade 11 student 
         except Exception as e:
             logger.error(f"❌ Error generating answer: {e}", exc_info=True)
             # Keep a friendly error message, but maybe slightly more in persona?
-            return "Oops! Something went a bit sideways while I was thinking. Could you try asking that again? 😊"
+            error_message = "Oops! Something went a bit sideways while I was thinking. Could you try asking that again? 😊"
+            # Append a random closing phrase even to error messages
+            return error_message + " " + random.choice(CLOSING_REMARKS)
 

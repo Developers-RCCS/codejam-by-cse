@@ -7,7 +7,7 @@ from .retriever import RetrieverAgent
 from .generator import GeneratorAgent
 from .reference_tracker import ReferenceTrackerAgent
 from .context_expander import ContextExpansionAgent
-from utils.messages import get_random_message, CLOSING_REMARKS
+from utils.messages import get_random_message, CLOSING_REMARKS, PLAYFUL_FOLLOWUPS
 from utils.text_utils import post_process_answer
 
 logger = logging.getLogger(__name__)
@@ -25,19 +25,62 @@ class OrchestratorAgent(BaseAgent):
 
     def _post_process_answer(self, raw_answer: str) -> str:
         """Applies final polishing touches using utility functions."""
+        # First apply basic text processing
         processed = post_process_answer(raw_answer)
-
-        # Add a friendly closing remark if missing
-        ends_with_punctuation = processed.endswith(('.', '!', '?', ';', ')'))
-        ends_with_closing = any(processed.lower().endswith(remark.lower()) for remark in CLOSING_REMARKS)
-
-        if processed and not ends_with_punctuation and not ends_with_closing:
+        
+        # Check if the answer already has a closing remark
+        ends_with_closing = False
+        for remark in CLOSING_REMARKS:
+            if processed.lower().endswith(remark.lower()):
+                ends_with_closing = True
+                break
+        
+        # If no closing remark, add a supportive check-in or playful follow-up
+        if processed and not ends_with_closing:
             # Add a space if the last character isn't already whitespace
-            if processed and not processed[-1].isspace():
+            if processed[-1] not in [' ', '\n', '\t', '.', '?', '!']:
+                processed += ". "
+            elif processed[-1] not in [' ', '\n', '\t']:
                 processed += " "
-            processed += get_random_message('closing')
+                
+            # For multi-part answers (paragraphs), ensure we have nice short, friendly paragraphs
+            if len(processed.split('\n\n')) > 1 or len(processed) > 300:
+                # Add a playful follow-up for more complex answers
+                processed += get_random_message('followup')
+            else:
+                # Add a supportive closing for simpler answers
+                processed += get_random_message('supportive_closing')
 
         return processed
+
+    def _enhance_not_found_response(self, response: str) -> str:
+        """Adds a gentle tease to not-found responses."""
+        # Add a playful tease if it doesn't already have one
+        teases = [
+            "You're really putting my history brain to the test today! 😉", 
+            "Trying to stump me? You've found a good one!", 
+            "Clever question! You've got me on a historical treasure hunt!"
+        ]
+        
+        # Check if response already has one of our teases
+        has_tease = any(tease.lower() in response.lower() for tease in teases)
+        
+        if not has_tease:
+            tease = teases[0]  # Default to first tease
+            # Insert tease before any closing remark if present
+            for closing in CLOSING_REMARKS:
+                if closing in response:
+                    return response.replace(closing, f"{tease} {closing}")
+            
+            # Otherwise just append the tease
+            if response[-1] not in [' ', '\n', '\t', '.', '?', '!']:
+                response += ". "
+            elif response[-1] not in [' ', '\n', '\t']:
+                response += " "
+                
+            return f"{response}{tease}"
+        
+        return response
 
     def run(self, query: str, chat_history: list = None) -> dict:
         """Runs the full QA pipeline with enhanced query handling, retrieval, and context expansion."""
@@ -70,8 +113,8 @@ class OrchestratorAgent(BaseAgent):
 
         if not final_context_chunks:
             logger.warning("⚠️ No relevant context found after retrieval/expansion.")
-            # Use random "not found" message via util function
-            final_answer = get_random_message('not_found')
+            # Use random "not found" message via util function with a gentle tease
+            final_answer = self._enhance_not_found_response(get_random_message('not_found'))
             return {
                 "answer": final_answer,
                 "references": {"pages": [], "sections": []},
