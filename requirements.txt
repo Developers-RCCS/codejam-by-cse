@@ -1,0 +1,8 @@
+flask
+google-generativeai
+faiss-cpu
+langchain
+pypdf
+python-dotenv
+numpy
+spacy
