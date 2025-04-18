@@ -10,6 +10,7 @@ import time
 import functools
 import google.generativeai as genai # Ensure this is imported
 import re
+import random # <-- Import random
 from agents.retriever import RetrieverAgent
 from agents.query_analyzer import QueryAnalyzerAgent # Added import
 
@@ -35,6 +36,54 @@ if not os.path.exists('chats'):
 # Instantiate Agents
 retriever_agent = RetrieverAgent()
 query_analyzer_agent = QueryAnalyzerAgent() # Instantiate Query Analyzer
+
+# Define friendly "not found" messages
+NOT_FOUND_MESSAGES = [
+    "Ooh, that's a tricky one! My textbook doesn't seem to go into detail on that specific point. Maybe we could try phrasing it differently, or ask about something related? 😊",
+    "Hmm, stumped me there! Looks like the textbook is a bit quiet on that particular topic. Got another historical mystery for me?",
+    "Good question! I scanned my notes (aka the textbook!), but couldn't find the specifics on that. What else is on your mind?",
+    "My apologies, but the provided textbook excerpts don't seem to cover that. Is there another angle we could explore?",
+    "Interesting question! Unfortunately, the details aren't in the sections I have access to. Perhaps we can focus on a related event mentioned in the book?"
+]
+
+# Define friendly closing remarks for post-processing
+CLOSING_REMARKS = [
+    "Hope that helps! Ask me another!",
+    "Anything else you're curious about?",
+    "Happy to help! What's next on your mind? 😉",
+    "Let me know if you have more questions!",
+    "Was there anything else I can help you with today?"
+]
+
+# --- Post-processing function ---
+def post_process_answer(raw_answer: str) -> str:
+    """Applies final polishing touches to the generated answer."""
+    processed = raw_answer
+
+    # Remove common boilerplate leading phrases (case-insensitive)
+    processed = re.sub(r"^based on the context provided,?\s*", "", processed, flags=re.IGNORECASE | re.MULTILINE).strip()
+    processed = re.sub(r"^according to the text,?\s*", "", processed, flags=re.IGNORECASE | re.MULTILINE).strip()
+    processed = re.sub(r"^the provided context states that,?\s*", "", processed, flags=re.IGNORECASE | re.MULTILINE).strip()
+
+    # Remove common boilerplate closing phrases (case-insensitive)
+    processed = re.sub(r"in conclusion,?$\s*", "", processed, flags=re.IGNORECASE | re.MULTILINE).strip()
+    processed = re.sub(r"to summarize,?$\s*", "", processed, flags=re.IGNORECASE | re.MULTILINE).strip()
+
+    # Trim leading/trailing whitespace again after potential removals
+    processed = processed.strip()
+
+    # Add a friendly closing remark if missing
+    ends_with_punctuation = processed.endswith(('.', '!', '?', ';', ')'))
+    ends_with_closing = any(processed.lower().endswith(remark.lower()) for remark in CLOSING_REMARKS)
+
+    if processed and not ends_with_punctuation and not ends_with_closing:
+        # Add a space if the last character isn't already whitespace
+        if processed and not processed[-1].isspace():
+            processed += " "
+        processed += random.choice(CLOSING_REMARKS)
+
+    return processed
+# --- End Post-processing function ---
 
 # --- Hybrid search function ---
 # This function now primarily orchestrates the agents
@@ -163,20 +212,47 @@ def ask():
     
     # --- Profiling Retrieval ---
     retrieval_start = time.time()
-    # Use hybrid search (which now uses QueryAnalyzer and Retriever agents)
     chunks = hybrid_search_chunks(query, top_k=5, initial_top_k=15) # This call remains the same externally
     retrieval_time = time.time() - retrieval_start
     # --------------------------
 
-    # --- Profiling Generation ---
+    # --- Check if context was found ---
+    if not chunks:
+        print(f"Query: '{query}' - No relevant context found.")
+        answer = random.choice(NOT_FOUND_MESSAGES)
+        generation_time = 0 # Generation was skipped
+        # Update chat history with the "not found" response
+        chat_history.append({'sender': 'user', 'message': query})
+        chat_history.append({'sender': 'bot', 'message': answer})
+        # Save the updated chat history
+        save_chat_history(session['user_id'], chat_history)
+        total_time = time.time() - start_time
+        # Log timings
+        print(f"  Retrieval Time: {retrieval_time:.4f}s")
+        print(f"  Generation Time: SKIPPED")
+        print(f"  Total Request Time: {total_time:.4f}s")
+        # Return the friendly "not found" message
+        return jsonify({
+            'answer': answer,
+            'chat_history': chat_history
+        })
+    # --- End Check ---
+
+    # --- Profiling Generation (only if chunks were found) ---
     generation_start = time.time()
-    answer = generate_answer(query, chunks, chat_history) # Pass chat_history here
+    raw_answer = generate_answer(query, chunks, chat_history) # Get raw answer
     generation_time = time.time() - generation_start
     # --------------------------
+
+    # --- Post-process the answer --- <--- NEW STEP
+    post_processing_start = time.time()
+    final_answer = post_process_answer(raw_answer)
+    post_processing_time = time.time() - post_processing_start
+    # -------------------------------
     
-    # Update chat history
+    # Update chat history with the FINAL answer
     chat_history.append({'sender': 'user', 'message': query})
-    chat_history.append({'sender': 'bot', 'message': answer})
+    chat_history.append({'sender': 'bot', 'message': final_answer})
     
     # Save the updated chat history
     save_chat_history(session['user_id'], chat_history)
@@ -185,13 +261,14 @@ def ask():
 
     # --- Logging Timings ---
     print(f"Query: '{query}'")
-    print(f"  Retrieval Time (top_k={len(chunks)}): {retrieval_time:.4f}s")
+    print(f"  Retrieval Time (top_k={len(chunks)}): {retrieval_time:.4f}s") # Log actual number retrieved
     print(f"  Generation Time: {generation_time:.4f}s")
+    print(f"  Post-processing Time: {post_processing_time:.4f}s") # <-- Log post-processing time
     print(f"  Total Request Time: {total_time:.4f}s")
     # -----------------------
     
     return jsonify({
-        'answer': answer,
+        'answer': final_answer, # Return the final, polished answer
         'chat_history': chat_history
     })
 
