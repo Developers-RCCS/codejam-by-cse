@@ -28,7 +28,7 @@ This project implements a Retrieval-Augmented Generation (RAG) chatbot focused o
 
     pip install -r requirements.txt
     ```
-    *(Note: A `requirements.txt` file might need to be created if it doesn't exist. Based on the project files, likely dependencies include: `flask`, `google-generativeai`, `faiss-cpu` or `faiss-gpu`, `langchain` (potentially), `pypdf`, `python-dotenv`, `numpy`)*
+    *(Note: A `requirements.txt` file might need to be created if it doesn't exist. Based on the project files, likely dependencies include: `flask`, `google-generativeai`, `faiss-cpu` or `faiss-gpu`, `langchain` (potentially), `pypdf`, `python-dotenv`, `numpy`, `spacy`)*
 
 3.  **Configure API Key:**
     *   Create a file named `.env` in the root project directory.
@@ -41,7 +41,7 @@ This project implements a Retrieval-Augmented Generation (RAG) chatbot focused o
 4.  **Process the PDF (if not already done):**
     The project needs to process the `grade-11-history-text-book.pdf` into a vector store. There might be a script for this, or it might happen automatically on the first run. Check `main.py`, `embed_store.py`, or `pdf_chunker.py` for clues. If a specific script exists (e.g., `python embed_store.py`), run it:
     ```bash
-    python embed_store.py
+    python faiss_store.py
     ```
     This will create the `faiss_index.index` and `faiss_metadata.pkl` files (or similar).
 
@@ -52,7 +52,7 @@ There seem to be multiple ways to interact with the chatbot:
 1.  **Web Interface (Recommended):**
     *   Run the Flask web server:
         ```bash
-        python app.py
+        python web.py
         ```
     *   Open your web browser and navigate to the address provided (usually `http://127.0.0.1:5000` or similar).
 
