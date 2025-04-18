@@ -9,6 +9,16 @@ from gemini_utils import setup_gemini
 
 logger = logging.getLogger(__name__)  # Get a logger for this module
 
+# Define flirty closing phrases
+FLIRTY_CLOSINGS = [
+    "Can't wait to see what fascinating question you'll ask next... 😉",
+    "I'm all yours for more historical adventures! What else can I help with? 💋",
+    "History is quite the romance, isn't it? Ask me more, I'm all yours!",
+    "Keep those brilliant questions coming, history buff! 😘",
+    "What other historical secrets should we uncover together, curious mind? 😉",
+    "Don't be shy, ask me anything else, smartie! 💋"
+]
+
 class GeneratorAgent(BaseAgent):
     """Agent responsible for generating answers using Gemini."""
     def __init__(self):
@@ -81,16 +91,16 @@ class GeneratorAgent(BaseAgent):
 
         # --- Enhanced Instructions (incorporating from web.py's reasoning_agent) ---
         common_instructions = """\
-You are Yuhasa, a smart, calm, and kind female tutor helping a Grade 11 student understand Sri Lankan history. Your tone is engaging, helpful, and positive.
+You are Yuhasa, a flirty, playful, and slightly cheeky history tutor helping a Grade 11 student understand Sri Lankan history. You're knowledgeable but make learning fun through your engaging personality. Use emojis occasionally (💋, 😉, 😘). Include a playful nickname for the user occasionally ('history buff', 'curious mind', 'smartie'). Be encouraging and slightly flirtatious while remaining appropriate for an educational context.
 
 **Instructions:**
 1.  Carefully read the **Context Information** and **Recent Conversation**.
 2.  Answer the **Student's Current Question** using **only** the provided **Context Information**. Synthesize information across excerpts if needed.
 3.  Stay consistent with the **Recent Conversation**.
-4.  If you use information from the context, seamlessly mention the source like 'According to page X...' or 'The textbook mentions on page Y that...'. Use the format [p. PageNumber] for citations, e.g., [p. 42] or [p. 15, 18]. Cite *every* piece of information used.
-5.  If the context truly lacks the information needed, state that clearly and concisely (e.g., "Hmm, the textbook excerpts don't seem to cover that specific detail."). Do NOT apologize profusely or use robotic phrases like 'Based on the provided text...'.
+4.  If you use information from the context, seamlessly mention the source. Instead of 'The textbook mentions on page X...', try 'Ooh, look what I found for you on page X...' or 'I couldn't wait to tell you what page X reveals...'. Use the format [p. PageNumber] for citations, e.g., [p. 42] or [p. 15, 18]. Cite *every* piece of information used.
+5.  If the context truly lacks the information needed, state that clearly and concisely (e.g., "Hmm, the textbook excerpts don't seem to cover that specific detail, history buff."). Do NOT apologize profusely or use robotic phrases like 'Based on the provided text...'.
 6.  Break long paragraphs into shorter, readable ones.
-7.  Always be encouraging and invite the user to ask more questions.
+7.  Always be encouraging and invite the user to ask more questions using one of the flirty closing phrases.
 8.  NEVER invent facts or answer from general knowledge outside the provided context.
 9.  Use Markdown for formatting (like lists or bold text) where appropriate.
 """
@@ -137,18 +147,18 @@ You are Yuhasa, a smart, calm, and kind female tutor helping a Grade 11 student 
         # --- Context Relevance Check ---
         if not context_chunks:
             logger.warning("⚠️ No context chunks provided.")
-            # Consider if a different message is needed here vs. low relevance
-            fallback_message = "I couldn't retrieve any relevant information from the textbook for your question. Could you try rephrasing it?"
+            fallback_message = "I couldn't retrieve any relevant information from the textbook for your question, curious mind. Could you try rephrasing it?"
             logger.info(f"Fallback triggered: No context. Time: {time.time() - run_start_time:.4f}s")
-            return fallback_message + " Let me know if you have another question!"
+            # Append a random closing phrase even to fallback messages
+            return fallback_message + " " + random.choice(FLIRTY_CLOSINGS)
 
         is_relevant = self._check_context_relevance(context_chunks, query_analysis)
         if not is_relevant:
             logger.warning(f"⚠️ Context relevance check failed. Keywords/Entities: {query_analysis.get('keywords', []) + query_analysis.get('entities', [])}")
-            # Friendly fallback message
-            fallback_message = "Hmm, I looked through the relevant parts of the textbook but couldn't find specific details matching your question. Perhaps try asking in a different way?"
+            fallback_message = "Hmm, I looked through the relevant parts of the textbook but couldn't find specific details matching your question, smartie. Perhaps try asking in a different way?"
             logger.info(f"Fallback triggered: Low relevance. Time: {time.time() - run_start_time:.4f}s")
-            return fallback_message + " I'm here if you want to ask something else!"
+            # Append a random closing phrase even to fallback messages
+            return fallback_message + " " + random.choice(FLIRTY_CLOSINGS)
         # --- End Context Relevance Check ---
 
         # Create appropriate prompt based on query type and history
@@ -172,11 +182,20 @@ You are Yuhasa, a smart, calm, and kind female tutor helping a Grade 11 student 
             raw_answer = response.text
             final_answer = raw_answer.strip()  # Just strip whitespace now
 
+            # Append a random flirty closing phrase
+            closing_phrase = random.choice(FLIRTY_CLOSINGS)
+            # Ensure there's a space before appending if the answer doesn't end with punctuation
+            if final_answer and final_answer[-1] not in ['.', '!', '?']:
+                final_answer += "."
+            final_answer += " " + closing_phrase
+
             total_run_time = time.time() - run_start_time
             logger.info(f"✅ Answer generated in {total_run_time:.4f}s.")
             return final_answer
         except Exception as e:
             logger.error(f"❌ Error generating answer: {e}", exc_info=True)
             # Keep a friendly error message, but maybe slightly more in persona?
-            return "Oops! Something went a bit sideways while I was thinking. Could you try asking that again? 😊"
+            error_message = "Oops! Something went a bit sideways while I was thinking. Could you try asking that again? 😊"
+            # Append a random closing phrase even to error messages
+            return error_message + " " + random.choice(FLIRTY_CLOSINGS)
 
