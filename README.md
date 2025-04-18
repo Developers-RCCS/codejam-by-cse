@@ -65,13 +65,12 @@ There seem to be multiple ways to interact with the chatbot:
 
 ## Project Structure Overview
 
-*   `app.py`: Runs the Flask web server for the GUI.
+*   `web.py`: Runs the Flask web server for the GUI.
 *   `cli_chat.py`: Provides a command-line interface.
 *   `config.py`: Handles configuration (like API keys).
-*   `embed_store.py` / `faiss_store.py`: Manages the creation and querying of the FAISS vector store.
+*   `faiss_store.py`: Manages the creation and querying of the FAISS vector store.
 *   `gemini_utils.py`: Contains helper functions for interacting with the Gemini API.
 *   `pdf_chunker.py`: Responsible for reading and splitting the PDF document.
-*   `query_answer.py`: Likely contains the core RAG logic.
 *   `agents/`: Directory containing different components (agents) of the RAG pipeline (Retriever, Generator, Orchestrator, etc.).
 *   `templates/index.html`: The HTML structure for the web interface.
 *   `static/`: Contains CSS and JS for the web interface.
