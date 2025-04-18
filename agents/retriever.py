@@ -4,218 +4,148 @@ import numpy as np
 import pickle
 import re
 from collections import Counter
+import time  # Added for profiling
 from .base import BaseAgent
 from gemini_utils import embed_text
+
+# --- Configuration ---
+DEFAULT_HYBRID_INITIAL_TOP_K = 15  # Tunable parameter for initial FAISS candidate count in hybrid search.
 
 class RetrieverAgent(BaseAgent):
     """Agent responsible for retrieving and re-ranking relevant text chunks."""
     def __init__(self, index_path="faiss_index.index", metadata_path="faiss_metadata.pkl"):
-        print("💾 Loading FAISS index...")
+        init_start_time = time.time()
+        print("💾 Loading FAISS index and metadata...")
         self.index = faiss.read_index(index_path)
         with open(metadata_path, "rb") as f:
             self.metadata = pickle.load(f)
         self.texts = self.metadata["texts"]
         self.metadatas = self.metadata["metadatas"]
-        print(f"✅ FAISS index loaded with {len(self.texts)} chunks.")
+        print(f"✅ FAISS index & metadata loaded in {time.time() - init_start_time:.2f}s ({len(self.texts)} chunks).")
 
     def bm25_tokenize(self, text):
         """Tokenize text for BM25 scoring."""
-        # Convert to lowercase and split on non-alphanumeric characters
         return re.findall(r'\b\w+\b', text.lower())
-    
-    def calculate_tf(self, text, query_tokens):
-        """Calculate term frequency for each query token in the text."""
-        text_tokens = self.bm25_tokenize(text)
-        token_counts = Counter(text_tokens)
-        
-        # Calculate term frequency for each query token
-        tf_scores = {}
-        for token in query_tokens:
-            tf = token_counts.get(token, 0) / max(len(text_tokens), 1)
-            tf_scores[token] = tf
-            
-        return tf_scores
-    
-    def calculate_idf(self, query_tokens):
-        """Calculate inverse document frequency for query tokens."""
-        # Count documents containing each token
-        doc_counts = {}
-        total_docs = len(self.texts)
-        
-        for token in query_tokens:
-            count = sum(1 for text in self.texts if token in self.bm25_tokenize(text))
-            # Add smoothing to avoid division by zero
-            doc_counts[token] = count if count > 0 else 0.5
-            
-        # Calculate IDF
-        idf_scores = {}
-        for token, count in doc_counts.items():
-            idf_scores[token] = np.log((total_docs - count + 0.5) / (count + 0.5) + 1)
-            
-        return idf_scores
-    
-    def keyword_bm25_score(self, text, query, idf_scores):
-        """Calculate BM25-inspired score for keyword matching."""
-        query_tokens = self.bm25_tokenize(query)
-        if not query_tokens:
-            return 0.0
-            
-        # Get term frequencies
-        tf_scores = self.calculate_tf(text, query_tokens)
-        
-        # BM25 parameters
-        k1 = 1.5  # Term frequency saturation
-        b = 0.75  # Length normalization
-        
-        # Calculate average document length
-        avg_doc_len = sum(len(self.bm25_tokenize(doc)) for doc in self.texts) / max(len(self.texts), 1)
-        
-        # Current document length
-        doc_len = len(self.bm25_tokenize(text))
-        
-        # Calculate BM25 score
-        score = 0.0
-        for token in query_tokens:
-            if token in tf_scores and token in idf_scores:
-                numerator = tf_scores[token] * (k1 + 1)
-                denominator = tf_scores[token] + k1 * (1 - b + b * (doc_len / avg_doc_len))
-                score += idf_scores[token] * (numerator / denominator)
-                
-        return score
 
-    def entity_match_score(self, text, entities):
-        """Calculate score based on entity matches in text."""
+    def simple_keyword_score(self, text_lower, query_keywords_set):
+        """Calculate a simple score based on keyword overlap."""
+        text_tokens = set(re.findall(r'\b\w+\b', text_lower))
+        common_keywords = text_tokens.intersection(query_keywords_set)
+        return len(common_keywords) / len(query_keywords_set) if query_keywords_set else 0.0
+
+    def simple_entity_score(self, text_lower, entities):
+        """Calculate score based on simple entity presence."""
+        score = 0.0
         if not entities:
             return 0.0
-            
-        # Count exact matches of entities in text
-        text_lower = text.lower()
-        match_count = sum(1 for entity in entities if entity.lower() in text_lower)
-        
-        # Normalize by number of entities
-        normalized_score = match_count / len(entities)
-        return normalized_score
-    
+        for entity in entities:
+            if entity.lower() in text_lower:
+                score += 1
+        return score / len(entities)
+
     def section_relevance_score(self, metadata, query_type):
         """Score chunks based on section relevance to query type."""
-        # Default score
-        score = 0.5
-        
         section = metadata.get("section", "").lower()
-        
-        # Boost scores for sections likely to contain answers for different query types
+        score = 0.5
         if query_type == "factual" and any(term in section for term in ["overview", "introduction", "summary", "facts", "data"]):
             score = 0.8
         elif query_type == "causal/analytical" and any(term in section for term in ["causes", "effects", "impact", "analysis", "consequences"]):
             score = 0.8
         elif query_type == "comparative" and any(term in section for term in ["comparison", "versus", "differences", "similarities"]):
             score = 0.8
-            
         return score
 
     def re_rank_chunks(self, initial_results, query, query_analysis):
         """Re-rank chunks based on multiple factors: semantic, keyword, entity, and metadata."""
+        rerank_start_time = time.time()
         print("⚖️ Re-ranking retrieved chunks...")
         if not initial_results:
+            print("  No initial results to re-rank.")
             return []
-            
-        # Extract data from query analysis
+
         keywords = query_analysis.get("keywords", [])
         entities = query_analysis.get("entities", [])
         query_type = query_analysis.get("query_type", "unknown")
-        
-        # Pre-calculate IDF scores for efficiency
-        query_tokens = self.bm25_tokenize(query)
-        idf_scores = self.calculate_idf(query_tokens)
+        query_keywords_set = set(keywords)
+        print(f"  Extracted Keywords: {keywords}, Entities: {entities}, Type: {query_type}")
 
-        # Calculate weights for different scores
         weights = {
-            "semantic": 0.5,    # Vector similarity (from FAISS)
-            "keyword": 0.25,    # Keyword/BM25 score
-            "entity": 0.15,     # Named entity matching
-            "section": 0.1      # Section relevance
+            "semantic": 0.5,
+            "keyword": 0.3,
+            "entity": 0.15,
+            "section": 0.05
         }
-        
-        # Normalize semantic scores (lower FAISS distance = better match)
+
         max_faiss_dist = max(r["score"] for r in initial_results) if initial_results else 1.0
-        if max_faiss_dist == 0: max_faiss_dist = 1.0  # Avoid division by zero
-        
+        if max_faiss_dist <= 0:
+            max_faiss_dist = 1.0
+
         for result in initial_results:
-            # 1. Normalize semantic score (invert distance)
-            result["semantic_score"] = 1.0 - (result["score"] / max_faiss_dist)
-            
-            # 2. Calculate keyword/BM25 score
-            result["keyword_score"] = self.keyword_bm25_score(result["text"], query, idf_scores)
-            
-            # 3. Calculate entity match score
-            result["entity_score"] = self.entity_match_score(result["text"], entities)
-            
-            # 4. Calculate section relevance score
+            text_lower = result["text"].lower()
+            result["semantic_score"] = max(0.0, 1.0 - (result["score"] / max_faiss_dist))
+            result["keyword_score"] = self.simple_keyword_score(text_lower, query_keywords_set)
+            result["entity_score"] = self.simple_entity_score(text_lower, entities)
             result["section_score"] = self.section_relevance_score(result["metadata"], query_type)
-            
-            # 5. Calculate combined score
+
             combined_score = (
                 weights["semantic"] * result["semantic_score"] +
                 weights["keyword"] * result["keyword_score"] +
                 weights["entity"] * result["entity_score"] +
                 weights["section"] * result["section_score"]
             )
-            
+
             result["combined_score"] = combined_score
-            
-            # Calculate confidence based on combined score
-            # Scale to [0.0, 1.0] range - can adjust thresholds as needed
+
             if combined_score > 0.8:
-                confidence = 0.9  # Very high confidence
+                confidence = 0.9
             elif combined_score > 0.6:
-                confidence = 0.7  # High confidence
+                confidence = 0.7
             elif combined_score > 0.4:
-                confidence = 0.5  # Medium confidence
+                confidence = 0.5
             elif combined_score > 0.2:
-                confidence = 0.3  # Low confidence
+                confidence = 0.3
             else:
-                confidence = 0.1  # Very low confidence
-                
+                confidence = 0.1
             result["confidence"] = confidence
-        
-        # Sort by combined score (descending)
+
         ranked_results = sorted(initial_results, key=lambda x: x["combined_score"], reverse=True)
-        
-        # Log ranking details
+        total_rerank_time = time.time() - rerank_start_time
         print(f"✅ Re-ranking complete. Top score: {ranked_results[0]['combined_score']:.2f} with confidence {ranked_results[0]['confidence']:.2f}" if ranked_results else "✅ Re-ranking complete. No results.")
-        
         return ranked_results
 
-    def run(self, query: str, query_analysis: dict, top_k: int = 10):
+    def run(self, query: str, query_analysis: dict, initial_top_k: int = DEFAULT_HYBRID_INITIAL_TOP_K, final_top_k: int = 5):
         """Retrieves chunks using semantic search, filters and re-ranks them."""
-        # Extract data from query analysis
+        run_start_time = time.time()
         keywords = query_analysis.get("keywords", [])
         entities = query_analysis.get("entities", [])
-        
-        print(f"🔎 Running hybrid retrieval for: '{query}'")
+        print(f"🔎 Running hybrid retrieval for: '{query}' (Initial K={initial_top_k}, Final K={final_top_k})")
         print(f"   Keywords: {keywords}")
         print(f"   Entities: {entities}")
-        
-        # 1. Initial semantic search
+
         query_embedding = embed_text(query)
+        if query_embedding is None:
+            print("  Error: Failed to generate query embedding.")
+            return []
         query_embedding_np = np.array([query_embedding]).astype("float32")
-        distances, indices = self.index.search(query_embedding_np, top_k)
-        
-        # 2. Gather initial results
+
+        try:
+            distances, indices = self.index.search(query_embedding_np, initial_top_k)
+        except Exception as e:
+            print(f"  Error during FAISS search: {e}")
+            return []
+
         initial_results = []
         for i, idx in enumerate(indices[0]):
             if 0 <= idx < len(self.texts):
                 initial_results.append({
                     "text": self.texts[idx],
                     "metadata": self.metadatas[idx],
-                    "score": distances[0][i]  # FAISS distance (lower is better)
+                    "score": distances[0][i]
                 })
-        
-        print(f"✅ Retrieved {len(initial_results)} chunks through semantic search.")
-        
-        # 3. Re-rank results
+
+        print(f"✅ Retrieved {len(initial_results)} valid chunks via semantic search.")
         ranked_results = self.re_rank_chunks(initial_results, query, query_analysis)
-        
-        # 4. Return the re-ranked results (limit to top N)
-        final_top_k = min(5, len(ranked_results))
-        return ranked_results[:final_top_k]
+        final_results = ranked_results[:final_top_k]
+        total_run_time = time.time() - run_start_time
+        print(f"--- Returning {len(final_results)} final results ---")
+        return final_results

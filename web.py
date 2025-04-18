@@ -9,6 +9,8 @@ import json
 import time
 import functools
 import google.generativeai as genai # Ensure this is imported
+import re
+from agents.retriever import RetrieverAgent
 
 app = Flask(__name__)
 app.secret_key = 'dj89we923n7yr27y4x74y8x634txb6fx763t4x763tn47s6326st6s7t26nn73n6'
@@ -29,18 +31,30 @@ gemini = setup_gemini()
 if not os.path.exists('chats'):
     os.makedirs('chats')
 
-@functools.lru_cache(maxsize=128)
-def search_chunks(query, top_k=300):
-    query_embedding = np.array(embed_text(query), dtype="float32").reshape(1, -1)
-    D, I = index.search(query_embedding, top_k)
+# Instantiate RetrieverAgent for hybrid search
+retriever_agent = RetrieverAgent()
 
-    results = []
-    for idx in I[0]:
-        results.append({
-            "text": texts[idx],
-            "page": metadatas[idx]["page"]
-        })
-    return results
+# --- Hybrid search function ---
+def hybrid_search_chunks(query, top_k=5, initial_top_k=15):
+    # Lightweight keyword/entity extraction (similar to graph.py)
+    keywords = re.findall(r'"(.*?)"|\b[A-Z][a-zA-Z]+\b', query)
+    entities = re.findall(r'\b[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*\b', query)
+    query_type = "unknown"
+    if "cause" in query.lower() or "why" in query.lower():
+        query_type = "causal/analytical"
+    elif "compare" in query.lower() or "difference" in query.lower():
+        query_type = "comparative"
+    elif re.match(r"^(what|who|when|where)\s+is|was", query.lower()):
+        query_type = "factual"
+    query_analysis = {
+        "keywords": list(set([k.strip().lower() for k in keywords if k])),
+        "entities": list(set([e.strip() for e in entities if len(e.split()) > 1 or e in keywords])),
+        "query_type": query_type
+    }
+    # Use RetrieverAgent's hybrid run method
+    results = retriever_agent.run(query=query, query_analysis=query_analysis, initial_top_k=initial_top_k, final_top_k=top_k)
+    # Format for downstream (page in metadata)
+    return [{"text": r["text"], "page": r["metadata"].get("page", "?")} for r in results]
 
 def reasoning_agent(query, context_chunks, chat_history=None):
     context_text = "\n\n".join(
@@ -156,8 +170,8 @@ def ask():
     
     # --- Profiling Retrieval ---
     retrieval_start = time.time()
-    # Process the query - Reduce top_k significantly for testing
-    chunks = search_chunks(query, top_k=5) # Start with a smaller top_k
+    # Use hybrid search instead of pure semantic
+    chunks = hybrid_search_chunks(query, top_k=5, initial_top_k=15)
     retrieval_time = time.time() - retrieval_start
     # --------------------------
 
