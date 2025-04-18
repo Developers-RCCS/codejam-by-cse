@@ -2,16 +2,23 @@
 import re
 import time
 import random
+import logging  # Added import
 import google.generativeai as genai
 from .base import BaseAgent
 from gemini_utils import setup_gemini
 
+logger = logging.getLogger(__name__)  # Get a logger for this module
+
 class GeneratorAgent(BaseAgent):
     """Agent responsible for generating answers using Gemini."""
     def __init__(self):
-        print("✨ Initializing Gemini model...")
-        self.gemini = setup_gemini()
-        print("✅ Gemini model initialized.")
+        logger.info("✨ Initializing Gemini model...")
+        try:
+            self.gemini = setup_gemini()
+            logger.info("✅ Gemini model initialized successfully.")
+        except Exception as e:
+            logger.error(f"Failed to initialize Gemini model: {e}", exc_info=True)
+            self.gemini = None
 
     def _check_context_relevance(self, context_chunks: list[dict], query_analysis: dict) -> bool:
         """Check if any context chunk contains keywords or entities from the query."""
@@ -120,27 +127,27 @@ You are Yuhasa, a smart, calm, and kind female tutor helping a Grade 11 student 
     def run(self, query: str, context_chunks: list[dict], query_analysis: dict = None, chat_history: list = None) -> str:
         """Generates an answer based on the query, context, analysis, and history."""
         run_start_time = time.time()
-        print("✍️ Generating answer...")
+        logger.debug(f"✍️ Generating answer for query: '{query}' with {len(context_chunks)} context chunks.")
 
         if not query_analysis:
             # Fallback if analysis is missing (shouldn't happen in normal flow)
-            print("  ⚠️ Query analysis missing, using default analysis.")
+            logger.warning("⚠️ Query analysis missing, using default analysis.")
             query_analysis = {"query_type": "unknown", "complexity": "simple", "keywords": [], "entities": []}
 
         # --- Context Relevance Check ---
         if not context_chunks:
-            print("  ⚠️ No context chunks provided.")
+            logger.warning("⚠️ No context chunks provided.")
             # Consider if a different message is needed here vs. low relevance
             fallback_message = "I couldn't retrieve any relevant information from the textbook for your question. Could you try rephrasing it?"
-            print(f"  Fallback triggered: No context. Time: {time.time() - run_start_time:.4f}s")
+            logger.info(f"Fallback triggered: No context. Time: {time.time() - run_start_time:.4f}s")
             return fallback_message + " Let me know if you have another question!"
 
         is_relevant = self._check_context_relevance(context_chunks, query_analysis)
         if not is_relevant:
-            print(f"  ⚠️ Context relevance check failed. Keywords/Entities: {query_analysis.get('keywords', []) + query_analysis.get('entities', [])}")
+            logger.warning(f"⚠️ Context relevance check failed. Keywords/Entities: {query_analysis.get('keywords', []) + query_analysis.get('entities', [])}")
             # Friendly fallback message
             fallback_message = "Hmm, I looked through the relevant parts of the textbook but couldn't find specific details matching your question. Perhaps try asking in a different way?"
-            print(f"  Fallback triggered: Low relevance. Time: {time.time() - run_start_time:.4f}s")
+            logger.info(f"Fallback triggered: Low relevance. Time: {time.time() - run_start_time:.4f}s")
             return fallback_message + " I'm here if you want to ask something else!"
         # --- End Context Relevance Check ---
 
@@ -156,7 +163,7 @@ You are Yuhasa, a smart, calm, and kind female tutor helping a Grade 11 student 
             # ---------------------------
 
             # Generate response with config
-            print("  Calling Gemini API...")
+            logger.info("Calling Gemini API...")
             gemini_start_time = time.time()
             response = self.gemini.generate_content(
                 prompt,
@@ -166,10 +173,10 @@ You are Yuhasa, a smart, calm, and kind female tutor helping a Grade 11 student 
             final_answer = raw_answer.strip()  # Just strip whitespace now
 
             total_run_time = time.time() - run_start_time
-            print(f"✅ Answer generated in {total_run_time:.4f}s.")
+            logger.info(f"✅ Answer generated in {total_run_time:.4f}s.")
             return final_answer
         except Exception as e:
-            print(f"❌ Error generating answer: {e}")
+            logger.error(f"❌ Error generating answer: {e}", exc_info=True)
             # Keep a friendly error message, but maybe slightly more in persona?
             return "Oops! Something went a bit sideways while I was thinking. Could you try asking that again? 😊"
 

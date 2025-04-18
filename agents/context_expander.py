@@ -1,7 +1,9 @@
 # agents/context_expander.py
+import logging  # Added import
 from .base import BaseAgent
-import numpy as np
-from gemini_utils import embed_text
+from utils.chunk_utils import filter_redundant_chunks
+
+logger = logging.getLogger(__name__)  # Get a logger for this module
 
 class ContextExpansionAgent(BaseAgent):
     """Agent responsible for assessing and expanding retrieval context."""
@@ -93,54 +95,6 @@ class ContextExpansionAgent(BaseAgent):
         print(f"✅ Found {len(additional_chunks)} additional context chunks.")
         return additional_chunks
 
-    def calculate_chunk_similarity(self, chunks):
-        """Calculate similarity between chunks to avoid adding redundant content."""
-        if len(chunks) <= 1:
-            return []
-            
-        # Generate embeddings for all chunks
-        embeddings = []
-        for chunk in chunks:
-            try:
-                emb = embed_text(chunk["text"])
-                embeddings.append(emb)
-            except Exception as e:
-                print(f"⚠️ Error embedding chunk: {e}")
-                embeddings.append([0] * 768)  # Default empty embedding
-                
-        # Calculate pairwise similarities
-        similarities = []
-        for i in range(len(chunks)):
-            for j in range(i+1, len(chunks)):
-                if i != j:
-                    similarity = np.dot(embeddings[i], embeddings[j])
-                    similarities.append((i, j, similarity))
-                    
-        return sorted(similarities, key=lambda x: x[2], reverse=True)
-
-    def filter_redundant_chunks(self, chunks, similarity_threshold=0.85):
-        """Remove chunks that are too similar to higher-ranked chunks."""
-        if len(chunks) <= 1:
-            return chunks
-            
-        similarities = self.calculate_chunk_similarity(chunks)
-        chunks_to_remove = set()
-        
-        # Mark lower-ranked chunks that are too similar to higher-ranked ones
-        for i, j, similarity in similarities:
-            if similarity > similarity_threshold:
-                # Remove the chunk with lower confidence
-                if chunks[i].get("confidence", 0) >= chunks[j].get("confidence", 0):
-                    chunks_to_remove.add(j)
-                else:
-                    chunks_to_remove.add(i)
-                    
-        # Create filtered list
-        filtered_chunks = [chunk for i, chunk in enumerate(chunks) if i not in chunks_to_remove]
-        
-        print(f"✅ Filtered out {len(chunks) - len(filtered_chunks)} redundant chunks.")
-        return filtered_chunks
-
     def fuse_chunks(self, chunks):
         """Fuse chunks into a coherent context, managing token limits."""
         print("🧩 Fusing chunks into coherent context...")
@@ -189,6 +143,7 @@ class ContextExpansionAgent(BaseAgent):
 
     def run(self, retrieved_chunks: list[dict], query_analysis: dict, retriever_agent) -> tuple[list[dict], dict]:
         """Assess context, expand if needed, filter redundancy, and fuse chunks."""
+        logger.debug(f"Running context expansion/filtering on {len(retrieved_chunks)} chunks.")
         # 1. Assess if the context is sufficient
         assessment = self.assess(retrieved_chunks)
         
@@ -213,16 +168,19 @@ class ContextExpansionAgent(BaseAgent):
             # Combine original and additional chunks
             expanded_chunks = retrieved_chunks + additional_chunks
             
-            # 3. Filter redundant chunks
-            final_chunks = self.filter_redundant_chunks(expanded_chunks)
+            # 3. Filter redundant chunks using the utility function
+            final_chunks = filter_redundant_chunks(expanded_chunks)
             
             print(f"✅ Context expansion complete: {len(final_chunks)} chunks after filtering.")
         else:
             print("✅ Original context is sufficient, no expansion needed.")
+            # Still filter original chunks for redundancy
+            final_chunks = filter_redundant_chunks(retrieved_chunks)
         
         # 4. Aggregate metadata from all included chunks
         aggregated_metadata = self.aggregate_metadata(final_chunks)
         
+        logger.debug(f"Context expansion complete. Final chunks: {len(final_chunks)}")
         # Note: We don't actually fuse the chunks here - that will be handled by the generator
         # when it builds its prompt, using the separate chunks we provide
         
