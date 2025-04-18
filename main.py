@@ -33,8 +33,6 @@ class AgentState(TypedDict):
 # Initialize the LangGraph
 workflow = StateGraph(AgentState)
 
-# --- Graph definition (nodes and edges) will be added later --- 
-
 app = FastAPI()
 
 # Optional: allow all CORS origins for dev
@@ -73,11 +71,51 @@ Answer:"""
 @app.post("/ask")
 async def ask_bot(request: QueryRequest):
     query = request.query
-    chunks = search_chunks(query)
-    answer = generate_answer(query, chunks)
-    pages = list(set([c["page"] for c in chunks]))
+    
+    try:
+        # Import workflow here to avoid circular imports
+        from graph import workflow
+        
+        # Initialize the state with the user query
+        initial_state = {
+            "initial_query": query,
+            "analyzed_query": None,
+            "retrieved_documents": [],
+            "intermediate_results": {},
+            "raw_answer": "",
+            "formatted_answer": "",
+            "references": {"pages": []},
+            "context_used": [],
+            "fact_check_passed": None,
+            "chat_history": []
+        }
+        
+        # Run the workflow with the initial state
+        result = workflow.invoke(initial_state)
+        
+        # Use existing search and generate functions as fallback
+        # This will be replaced as we implement more nodes in the graph
+        chunks = search_chunks(query)
+        answer = generate_answer(query, chunks)
+        pages = list(set([c["page"] for c in chunks]))
+        
+        # Print out the analyzed query from the workflow for debugging
+        print("Query Analysis:", result.get("analyzed_query"))
 
-    return {
-        "answer": answer,
-        "pages": pages
-    }
+        return {
+            "answer": answer,
+            "pages": pages,
+            # Include analysis information in response
+            "analysis": result.get("analyzed_query", {})
+        }
+    except Exception as e:
+        # Fallback to original implementation if the graph fails
+        print(f"LangGraph workflow error: {e}")
+        chunks = search_chunks(query)
+        answer = generate_answer(query, chunks)
+        pages = list(set([c["page"] for c in chunks]))
+
+        return {
+            "answer": answer,
+            "pages": pages
+        }
