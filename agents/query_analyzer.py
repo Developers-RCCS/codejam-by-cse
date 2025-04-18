@@ -55,6 +55,7 @@ class QueryAnalyzerAgent(BaseAgent):
         # Add more rules if needed
 
         analysis = {
+            "original_query": query, # Add the original query here
             "keywords": keywords,
             "entities": entities,
             "query_type": query_type
