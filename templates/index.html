@@ -270,13 +270,58 @@
             background: var(--bot-bubble-glass-bg); /* Panel base glass */
             color: var(--text-primary);
             border-bottom-left-radius: 5px;
+            padding-right: 35px; /* Add padding for the button */
+            padding-bottom: 30px; /* Add padding for the button */
+            position: relative; /* Needed for absolute positioning of child */
         }
-        .bot-message .avatar {
-            width: 32px;
-            height: 32px;
+
+        /* Styling for the speaker button within each message */
+        .message-speaker-button {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 0.3rem;
             border-radius: 50%;
-            margin-top: 2px;
-            border: 1px solid var(--glass-border);
+            transition: background-color 0.2s ease, color 0.2s ease, transform 0.1s ease, opacity 0.2s ease;
+            display: inline-flex; /* Use inline-flex */
+            align-items: center;
+            justify-content: center;
+            opacity: 0; /* Hidden initially */
+            position: absolute; /* Position relative to bubble */
+            bottom: 5px;
+            right: 5px;
+            width: 28px; /* Explicit size */
+            height: 28px; /* Explicit size */
+            box-sizing: border-box;
+            pointer-events: none; /* Initially not clickable */
+        }
+        /* Make button visible and clickable on bubble hover */
+        .bot-message .message-bubble:hover .message-speaker-button {
+             opacity: 0.7;
+             pointer-events: auto; /* Make clickable */
+        }
+        .message-speaker-button:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+            color: var(--text-primary);
+            opacity: 1; /* Fully opaque on button hover */
+        }
+        .message-speaker-button svg {
+            width: 16px; /* Smaller icon */
+            height: 16px;
+        }
+        .message-speaker-button:active {
+            transform: scale(0.92);
+        }
+        .message-speaker-button:focus {
+             outline: 2px solid var(--accent-color);
+             outline-offset: 1px;
+        }
+        .message-speaker-button.speaking {
+            color: var(--accent-color); /* Highlight when speaking */
+            background-color: rgba(123, 104, 238, 0.15);
+            opacity: 1; /* Fully visible when speaking */
+            pointer-events: auto; /* Ensure it remains clickable */
         }
 
         /* Typing Indicator */
@@ -727,6 +772,12 @@
 
                     const botContent = marked.parse(message);
                     messageBubble.innerHTML = `<div class="bot-markdown">${botContent}</div>`;
+
+                    const speakerButton = document.createElement('button');
+                    speakerButton.classList.add('message-speaker-button');
+                    speakerButton.title = "Play Message";
+                    speakerButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 12C15.5 13.933 13.933 15.5 12 15.5C10.067 15.5 8.5 13.933 8.5 12C8.5 10.067 10.067 8.5 12 8.5C13.933 8.5 15.5 10.067 15.5 12Z"></path><path d="M18.5 12C18.5 15.5899 15.5899 18.5 12 18.5C8.41015 18.5 5.5 15.5899 5.5 12C5.5 8.41015 8.41015 5.5 12 5.5C15.5899 5.5 18.5 8.41015 18.5 12Z"></path><path d="M21.5 12C21.5 17.2467 17.2467 21.5 12 21.5C6.75329 21.5 2.5 17.2467 2.5 12C2.5 6.75329 6.75329 2.5 12 2.5C17.2467 2.5 21.5 6.75329 21.5 12Z"></path></svg>`;
+                    messageBubble.appendChild(speakerButton);
                 } else {
                     const textNode = document.createTextNode(message);
                     messageBubble.appendChild(textNode);
@@ -906,9 +957,33 @@
                 alert('Attachment functionality is not yet implemented.');
             });
 
-            speakerButton.addEventListener('click', () => {
-                alert('Text-to-speech functionality is not yet implemented.');
+            // --- Event Listener using Delegation for Message Speaker Buttons ---
+            // Ensure this listener is correctly placed *after* the speakText function definition
+            chatContainer.addEventListener('click', function(event) {
+                // Find the closest ancestor button with the correct class
+                const button = event.target.closest('.message-speaker-button');
+                if (button && button.dataset.text) { // Check if it's the correct button and has text
+                    speakText(button.dataset.text, button);
+                } else if (button) {
+                    console.warn('Speaker button clicked, but no text found in dataset.');
+                }
             });
+            // --- End Text-to-Speech --- // Moved this comment block for clarity
+
+            // --- Disable Old Header Speaker Button ---
+            const headerSpeakerButton = document.getElementById('speakerButton'); // Ensure we get the correct button
+            if (headerSpeakerButton) {
+                headerSpeakerButton.onclick = null; // Remove any existing click listeners directly
+                headerSpeakerButton.addEventListener('click', (e) => {
+                    e.preventDefault(); // Prevent any default action
+                    alert('Text-to-speech is available on individual bot messages.'); // Updated alert
+                });
+                headerSpeakerButton.disabled = true;
+                headerSpeakerButton.title = "Text-to-speech available on individual messages";
+                headerSpeakerButton.style.opacity = "0.5";
+                headerSpeakerButton.style.cursor = "default";
+            }
+
 
             // --- Initial Setup ---
             userInput.focus();
