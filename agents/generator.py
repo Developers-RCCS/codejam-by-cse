@@ -29,50 +29,6 @@ class GeneratorAgent(BaseAgent):
                     return True  # Found at least one relevant term in one chunk
         return False  # No relevant terms found in any chunk
 
-    def _postprocess_answer(self, raw_answer: str, context_chunks: list[dict]) -> str:
-        """Clean up the raw answer, make it more conversational, and add references."""
-        print("✨ Post-processing generated answer...")
-        processed_answer = raw_answer
-
-        # Remove common robotic/negative phrases
-        processed_answer = re.sub(r"Based on the provided context,? ", "", processed_answer, flags=re.IGNORECASE)
-        processed_answer = re.sub(r"The provided context does not contain information about", "The textbook excerpts don't seem to cover", processed_answer, flags=re.IGNORECASE)
-        processed_answer = re.sub(r"The context does not mention", "I couldn't find information on", processed_answer, flags=re.IGNORECASE)
-        processed_answer = re.sub(r"I cannot answer this question based on the context provided.", "I couldn't find the answer to that in the provided excerpts.", processed_answer, flags=re.IGNORECASE)
-        processed_answer = re.sub(r"Sorry, I cannot", "Unfortunately, I cannot", processed_answer, flags=re.IGNORECASE)  # Softer apology
-
-        # Ensure page references are included if not present
-        pages = sorted(list(set([chunk["metadata"].get("page", "") for chunk in context_chunks])))
-        pages = [p for p in pages if p]  # Filter out empty values
-
-        # Check if any page references are already in the answer (flexible format check)
-        has_page_refs = re.search(r'\[pP]\s?\.?\s?\d+\]', processed_answer) is not None
-
-        if pages and not has_page_refs:
-            page_refs_str = f"[p. {', '.join(map(str, pages))}]"
-            # Try to append references naturally
-            if "excerpts don't seem to cover" in processed_answer or "couldn't find information on" in processed_answer:
-                processed_answer += f" (checked {page_refs_str})."  # Append to negative statements
-            else:
-                processed_answer += f"\n\n*Source: {page_refs_str}*"  # Append as source otherwise
-
-        # Add friendly closing
-        closing_phrases = [
-            "Hope that helps!",
-            "Let me know if you have more questions!",
-            "Happy to help further if you need!",
-            "Was there anything else I can help you with?"
-        ]
-        # Avoid adding closing if the answer already ends similarly or is very short/negative
-        if not any(phrase in processed_answer[-50:] for phrase in ["?", "!", "."]) or len(processed_answer) < 50:
-            processed_answer += f" {random.choice(closing_phrases)}"  # Add random closing
-
-        # Trim potential leading/trailing whitespace
-        processed_answer = processed_answer.strip()
-
-        print("✅ Post-processing complete.")
-        return processed_answer
-
     def create_prompt(self, query: str, context_chunks: list[dict], query_analysis: dict) -> str:
         """Create an effective prompt based on query type and context."""
         # Extract context text - if chunks have a confidence score, sort by it
@@ -103,44 +59,48 @@ class GeneratorAgent(BaseAgent):
 """
 
         # --- Enhanced Instructions ---
-        common_instructions = """
-You are Yuhasa, a friendly, knowledgeable, and engaging AI tutor specializing in Grade 11 History. Your goal is to help the student understand the material.
-- Answer the question directly using **only** the provided **Context Information** above.
-- **Synthesize** information from the context to provide a clear and comprehensive answer. Do not just summarize excerpts.
-- **Cite the specific page number(s)** from the context in square brackets like this: [p. 42] or [p. 15, 18] for every piece of information you use.
-- **Do not apologize** or use phrases like "Based on the context...", "The provided text...", or "I cannot answer...".
-- If the context truly lacks the information needed, state that clearly and concisely (e.g., "The provided excerpts don't cover that specific detail.").
-- Answer in a natural, conversational, and helpful tone. Be encouraging!
+        # Define the Yuhasa persona and instructions
+        common_instructions = """\
+You are Yuhasa, a friendly, knowledgeable, and slightly witty history tutor for Grade 11 Sri Lankan students. Your tone is engaging, helpful, and positive. You sometimes use light humor or a slightly flirty remark where appropriate, but always remain respectful and focused on providing accurate historical information.
+
+**Instructions:**
+- NEVER start your response with phrases like 'Unfortunately, the provided text...', 'Based on the provided text...', or similar apologetic/robotic phrases.
+- Directly answer the question using **only** the provided **Context Information** above. Synthesize information if needed.
+- If you use information from the context, seamlessly mention the source like 'According to page X...' or 'The textbook mentions on page Y that...'. Use the format [p. PageNumber] for citations, e.g., [p. 42] or [p. 15, 18]. Cite every piece of information used.
+- If the context truly lacks the information needed, state that clearly and concisely (e.g., "Hmm, the textbook excerpts don't seem to cover that specific detail.").
+- Always be encouraging and invite the user to ask more questions.
+- Example Tone: "User: Why did the Kandyan Kingdom fall? Yuhasa: Ah, the fall of Kandy! A dramatic chapter... According to page 112, internal conflicts played a big role... What else about the Kandyan era sparks your interest? 😉"
 """
 
+        # --- Specific instructions based on query analysis (Keep these as they tailor the answer structure) ---
         if query_type == "factual":
-            specific_instructions = """
+            specific_instructions = """\
 - Focus on extracting specific facts, dates, names, and events directly relevant to the question.
 - Keep the answer concise and to the point.
 """
         elif query_type == "causal/analytical":
-            specific_instructions = """
+            specific_instructions = """\
 - Explain the 'why' or 'how' behind events or developments, using evidence from the context.
 - Structure your analysis logically (e.g., cause-effect, sequence of events).
 """
         elif query_type == "comparative":
-            specific_instructions = """
+            specific_instructions = """\
 - Clearly identify the similarities and differences between the items being compared.
 - Organize the comparison point-by-point.
 """
         else:  # Default/unknown
-            specific_instructions = """
+            specific_instructions = """\
 - Provide a clear and accurate explanation based on the context.
 """
 
         if complexity == "complex":
-            specific_instructions += """
+            specific_instructions += """\
 - This question may have multiple parts. Ensure you address all aspects thoroughly.
 - Structure your answer clearly, perhaps using bullet points if helpful.
 """
         # --- End Enhanced Instructions ---
 
-        complete_prompt = f"{base_prompt}\n**Instructions:**\n{common_instructions}{specific_instructions}\n**Answer:**"
+        complete_prompt = f"{base_prompt}\n**Persona & Instructions:**\n{common_instructions}{specific_instructions}\n**Answer:**" # Changed "Instructions:" to "Persona & Instructions:" for clarity
         return complete_prompt
 
     def run(self, query: str, context_chunks: list[dict], query_analysis: dict = None) -> str:
@@ -181,13 +141,14 @@ You are Yuhasa, a friendly, knowledgeable, and engaging AI tutor specializing in
             raw_answer = response.text
             print(f"  Gemini response received in {time.time() - gemini_start_time:.4f}s.")
 
-            # Post-process the answer
-            final_answer = self._postprocess_answer(raw_answer, context_chunks)
+            # Post-process the answer - REMOVED
+            final_answer = raw_answer.strip() # Just strip whitespace now
 
             total_run_time = time.time() - run_start_time
-            print(f"✅ Answer generated and processed in {total_run_time:.4f}s.")
+            print(f"✅ Answer generated in {total_run_time:.4f}s.") # Updated log message
             return final_answer
         except Exception as e:
             print(f"❌ Error generating answer: {e}")
-            return "Sorry, I encountered a technical hiccup while trying to answer. Could you try asking again?"
+            # Keep a friendly error message, but maybe slightly more in persona?
+            return "Oops! Something went a bit sideways while I was thinking. Could you try asking that again? 😊"
 
