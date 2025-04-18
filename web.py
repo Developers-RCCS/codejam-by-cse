@@ -11,6 +11,7 @@ import functools
 import google.generativeai as genai # Ensure this is imported
 import re
 from agents.retriever import RetrieverAgent
+from agents.query_analyzer import QueryAnalyzerAgent # Added import
 
 app = Flask(__name__)
 app.secret_key = 'dj89we923n7yr27y4x74y8x634txb6fx763t4x763tn47s6326st6s7t26nn73n6'
@@ -31,28 +32,20 @@ gemini = setup_gemini()
 if not os.path.exists('chats'):
     os.makedirs('chats')
 
-# Instantiate RetrieverAgent for hybrid search
+# Instantiate Agents
 retriever_agent = RetrieverAgent()
+query_analyzer_agent = QueryAnalyzerAgent() # Instantiate Query Analyzer
 
 # --- Hybrid search function ---
+# This function now primarily orchestrates the agents
 def hybrid_search_chunks(query, top_k=5, initial_top_k=15):
-    # Lightweight keyword/entity extraction (similar to graph.py)
-    keywords = re.findall(r'"(.*?)"|\b[A-Z][a-zA-Z]+\b', query)
-    entities = re.findall(r'\b[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*\b', query)
-    query_type = "unknown"
-    if "cause" in query.lower() or "why" in query.lower():
-        query_type = "causal/analytical"
-    elif "compare" in query.lower() or "difference" in query.lower():
-        query_type = "comparative"
-    elif re.match(r"^(what|who|when|where)\s+is|was", query.lower()):
-        query_type = "factual"
-    query_analysis = {
-        "keywords": list(set([k.strip().lower() for k in keywords if k])),
-        "entities": list(set([e.strip() for e in entities if len(e.split()) > 1 or e in keywords])),
-        "query_type": query_type
-    }
-    # Use RetrieverAgent's hybrid run method
+    # 1. Analyze the query using the dedicated agent
+    query_analysis = query_analyzer_agent.run(query) # Use the agent
+
+    # 2. Retrieve using the analysis results
+    # Use RetrieverAgent's hybrid run method, passing the analysis
     results = retriever_agent.run(query=query, query_analysis=query_analysis, initial_top_k=initial_top_k, final_top_k=top_k)
+    
     # Format for downstream (page in metadata)
     return [{"text": r["text"], "page": r["metadata"].get("page", "?")} for r in results]
 
@@ -170,8 +163,8 @@ def ask():
     
     # --- Profiling Retrieval ---
     retrieval_start = time.time()
-    # Use hybrid search instead of pure semantic
-    chunks = hybrid_search_chunks(query, top_k=5, initial_top_k=15)
+    # Use hybrid search (which now uses QueryAnalyzer and Retriever agents)
+    chunks = hybrid_search_chunks(query, top_k=5, initial_top_k=15) # This call remains the same externally
     retrieval_time = time.time() - retrieval_start
     # --------------------------
 

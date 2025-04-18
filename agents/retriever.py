@@ -67,60 +67,73 @@ class RetrieverAgent(BaseAgent):
         entities = query_analysis.get("entities", [])
         query_type = query_analysis.get("query_type", "unknown")
         query_keywords_set = set(keywords)
-        print(f"  Extracted Keywords: {keywords}, Entities: {entities}, Type: {query_type}")
+        print(f"  Re-ranking based on -> Keywords: {keywords}, Entities: {entities}, Type: {query_type}")  # Enhanced logging
 
+        # --- Tuned Weights ---
         weights = {
-            "semantic": 0.5,
-            "keyword": 0.3,
-            "entity": 0.15,
-            "section": 0.05
+            "semantic": 0.4,  # Slightly reduced
+            "keyword": 0.35,  # Increased
+            "entity": 0.2,  # Increased
+            "section": 0.05  # Kept low
         }
+        # ---------------------
 
+        # Normalize semantic scores (FAISS distances are lower for better matches)
         max_faiss_dist = max(r["score"] for r in initial_results) if initial_results else 1.0
-        if max_faiss_dist <= 0:
+        if max_faiss_dist <= 0:  # Avoid division by zero
             max_faiss_dist = 1.0
 
-        for result in initial_results:
+        # Log details for each chunk being re-ranked
+        print(f"  Re-ranking {len(initial_results)} chunks...")
+        for i, result in enumerate(initial_results):
             text_lower = result["text"].lower()
-            result["semantic_score"] = max(0.0, 1.0 - (result["score"] / max_faiss_dist))
+            # Ensure score is non-negative before normalization
+            result["semantic_score"] = max(0.0, 1.0 - (max(0.0, result["score"]) / max_faiss_dist))
             result["keyword_score"] = self.simple_keyword_score(text_lower, query_keywords_set)
             result["entity_score"] = self.simple_entity_score(text_lower, entities)
             result["section_score"] = self.section_relevance_score(result["metadata"], query_type)
 
+            # Calculate combined score
             combined_score = (
                 weights["semantic"] * result["semantic_score"] +
                 weights["keyword"] * result["keyword_score"] +
                 weights["entity"] * result["entity_score"] +
                 weights["section"] * result["section_score"]
             )
-
             result["combined_score"] = combined_score
 
-            if combined_score > 0.8:
-                confidence = 0.9
+            # --- Adjusted Confidence Mapping ---
+            # Make confidence more sensitive to higher scores
+            if combined_score > 0.75:
+                confidence = 0.95  # High confidence for strong matches
             elif combined_score > 0.6:
-                confidence = 0.7
-            elif combined_score > 0.4:
+                confidence = 0.8
+            elif combined_score > 0.45:
+                confidence = 0.65
+            elif combined_score > 0.3:
                 confidence = 0.5
-            elif combined_score > 0.2:
-                confidence = 0.3
             else:
-                confidence = 0.1
+                confidence = 0.3  # Lower base confidence
             result["confidence"] = confidence
+            # ---------------------------------
 
+        # Sort by the new combined score
         ranked_results = sorted(initial_results, key=lambda x: x["combined_score"], reverse=True)
+
+        # Log top N results after ranking for verification
+        print("  Top 5 Re-ranked Chunks (Score | Confidence | Page):")
+        for i, r in enumerate(ranked_results[:5]):
+            page = r.get("metadata", {}).get("page", "?")
+            print(f"    {i+1}. Score={r['combined_score']:.3f} | Conf={r['confidence']:.2f} | Page={page} | Text: {r['text'][:100]}...")
+
         total_rerank_time = time.time() - rerank_start_time
-        print(f"✅ Re-ranking complete. Top score: {ranked_results[0]['combined_score']:.2f} with confidence {ranked_results[0]['confidence']:.2f}" if ranked_results else "✅ Re-ranking complete. No results.")
+        print(f"✅ Re-ranking complete in {total_rerank_time:.4f}s. Top score: {ranked_results[0]['combined_score']:.2f} with confidence {ranked_results[0]['confidence']:.2f}" if ranked_results else "✅ Re-ranking complete. No results.")
         return ranked_results
 
     def run(self, query: str, query_analysis: dict, initial_top_k: int = DEFAULT_HYBRID_INITIAL_TOP_K, final_top_k: int = 5):
         """Retrieves chunks using semantic search, filters and re-ranks them."""
         run_start_time = time.time()
-        keywords = query_analysis.get("keywords", [])
-        entities = query_analysis.get("entities", [])
         print(f"🔎 Running hybrid retrieval for: '{query}' (Initial K={initial_top_k}, Final K={final_top_k})")
-        print(f"   Keywords: {keywords}")
-        print(f"   Entities: {entities}")
 
         query_embedding = embed_text(query)
         if query_embedding is None:
@@ -130,22 +143,34 @@ class RetrieverAgent(BaseAgent):
 
         try:
             distances, indices = self.index.search(query_embedding_np, initial_top_k)
+            print(f"  FAISS search returned {len(indices[0])} indices.")
         except Exception as e:
             print(f"  Error during FAISS search: {e}")
             return []
 
         initial_results = []
+        valid_indices_count = 0
         for i, idx in enumerate(indices[0]):
+            # Ensure index is within bounds
             if 0 <= idx < len(self.texts):
                 initial_results.append({
                     "text": self.texts[idx],
                     "metadata": self.metadatas[idx],
-                    "score": distances[0][i]
+                    "score": distances[0][i]  # Raw FAISS distance
                 })
+                valid_indices_count += 1
+            else:
+                print(f"  Warning: Invalid index {idx} from FAISS search.")
 
-        print(f"✅ Retrieved {len(initial_results)} valid chunks via semantic search.")
+        print(f"✅ Retrieved {valid_indices_count} valid chunks via semantic search.")
+
+        # Re-rank using the analysis results
         ranked_results = self.re_rank_chunks(initial_results, query, query_analysis)
+
+        # Select the top N after re-ranking
         final_results = ranked_results[:final_top_k]
+
         total_run_time = time.time() - run_start_time
+        print(f"⏱️ Total Retrieval Time: {total_run_time:.4f}s")
         print(f"--- Returning {len(final_results)} final results ---")
         return final_results
