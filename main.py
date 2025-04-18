@@ -5,6 +5,8 @@ import faiss
 import numpy as np
 import pickle
 from gemini_utils import embed_text, setup_gemini
+from typing import TypedDict, List, Dict, Optional
+from langgraph.graph import StateGraph, END
 
 # Initialize Gemini + FAISS
 gemini = setup_gemini()
@@ -14,6 +16,24 @@ with open("faiss_metadata.pkl", "rb") as f:
 
 texts = metadata["texts"]
 metadatas = metadata["metadatas"]
+
+# Define the state structure for the LangGraph
+class AgentState(TypedDict):
+    initial_query: str
+    analyzed_query: Optional[Dict] # Output from QueryAnalyzerAgent
+    retrieved_documents: List[Dict] # Chunks from RetrieverAgent
+    intermediate_results: Dict # For storing temporary data between steps
+    raw_answer: str # Initial answer from GeneratorAgent
+    formatted_answer: str # Final answer post-processing
+    references: Dict # Structured references (e.g., {"pages": [...]})
+    context_used: List[Dict] # Specific context snippets used for the final answer
+    fact_check_passed: Optional[bool]
+    chat_history: List[Dict] # To store conversation history
+
+# Initialize the LangGraph
+workflow = StateGraph(AgentState)
+
+# --- Graph definition (nodes and edges) will be added later --- 
 
 app = FastAPI()
 
