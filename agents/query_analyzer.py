@@ -1,5 +1,6 @@
 # agents/query_analyzer.py
 import spacy
+import logging # Added import
 from .base import BaseAgent
 import re
 import time
@@ -13,14 +14,15 @@ except OSError:
     print("   Please run: python -m spacy download en_core_web_sm")
     nlp = None # Set nlp to None if loading fails
 
+logger = logging.getLogger(__name__) # Get a logger for this module
+
 class QueryAnalyzerAgent(BaseAgent):
     """Agent responsible for analyzing the user query."""
     def run(self, query: str) -> dict:
-        """Analyzes the query to extract keywords, entities, and determine query type."""
         start_time = time.time()
-        print(f"🧠 Analyzing query: '{query}'")
+        logger.debug(f"Analyzing query: '{query}'")
         if not nlp:
-            print("  spaCy model not loaded, falling back to basic analysis.")
+            logger.warning("spaCy model not loaded, falling back to basic analysis.")
             # Fallback basic extraction (similar to previous web.py logic)
             keywords = re.findall(r'"(.*?)"|\b[A-Z][a-zA-Z]+\b', query)
             entities = re.findall(r'\b[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*\b', query)
@@ -55,6 +57,7 @@ class QueryAnalyzerAgent(BaseAgent):
         # Add more rules if needed
 
         analysis = {
+            "original_query": query, # Add the original query here
             "keywords": keywords,
             "entities": entities,
             "query_type": query_type
@@ -62,10 +65,7 @@ class QueryAnalyzerAgent(BaseAgent):
         
         end_time = time.time()
         # Log the extracted information
-        print(f"  📊 Analysis Results:")
-        print(f"     Keywords: {analysis['keywords']}")
-        print(f"     Entities: {analysis['entities']}")
-        print(f"     Query Type: {analysis['query_type']}")
-        print(f"  ⏱️ Analysis Time: {end_time - start_time:.4f}s")
+        logger.debug(f"Analysis Results: Keywords: {analysis['keywords']}, Entities: {analysis['entities']}, Query Type: {analysis['query_type']}")
+        logger.debug(f"Analysis Time: {end_time - start_time:.4f}s")
         
         return analysis

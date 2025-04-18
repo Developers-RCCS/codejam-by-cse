@@ -2,15 +2,23 @@
 import re
 import time
 import random
+import logging  # Added import
+import google.generativeai as genai
 from .base import BaseAgent
 from gemini_utils import setup_gemini
+
+logger = logging.getLogger(__name__)  # Get a logger for this module
 
 class GeneratorAgent(BaseAgent):
     """Agent responsible for generating answers using Gemini."""
     def __init__(self):
-        print("✨ Initializing Gemini model...")
-        self.gemini = setup_gemini()
-        print("✅ Gemini model initialized.")
+        logger.info("✨ Initializing Gemini model...")
+        try:
+            self.gemini = setup_gemini()
+            logger.info("✅ Gemini model initialized successfully.")
+        except Exception as e:
+            logger.error(f"Failed to initialize Gemini model: {e}", exc_info=True)
+            self.gemini = None
 
     def _check_context_relevance(self, context_chunks: list[dict], query_analysis: dict) -> bool:
         """Check if any context chunk contains keywords or entities from the query."""
@@ -29,8 +37,8 @@ class GeneratorAgent(BaseAgent):
                     return True  # Found at least one relevant term in one chunk
         return False  # No relevant terms found in any chunk
 
-    def create_prompt(self, query: str, context_chunks: list[dict], query_analysis: dict) -> str:
-        """Create an effective prompt based on query type and context."""
+    def create_prompt(self, query: str, context_chunks: list[dict], query_analysis: dict, chat_history: list = None) -> str:
+        """Create an effective prompt based on query type, context, and history."""
         # Extract context text - if chunks have a confidence score, sort by it
         if context_chunks and "confidence" in context_chunks[0]:
             sorted_chunks = sorted(context_chunks, key=lambda x: x.get("confidence", 0), reverse=True)
@@ -46,33 +54,46 @@ class GeneratorAgent(BaseAgent):
             formatted_context += chunk["text"]
             formatted_context += "\n"
 
+        # 🧠 Construct real-time dialogue memory (from web.py's reasoning_agent)
+        conversation = ""
+        if chat_history:
+            trimmed = chat_history[-10:]  # Keep last 5 turns (10 messages)
+            for msg in trimmed:
+                role = "Student" if msg["sender"] == "user" else "Yuhasa"
+                conversation += f"{role}: {msg['message']}\n"
+        if not conversation:
+            conversation = "(No recent conversation history)"
+        # --- End dialogue memory ---
+
         # Get query type and complexity
         query_type = query_analysis.get("query_type", "unknown")
         complexity = query_analysis.get("complexity", "simple")
 
-        # Base prompt structure
-        base_prompt = f"""**Context Information:**
+        # Base prompt structure - Incorporating history
+        base_prompt = f"""**Recent Conversation:**
+{conversation}
+**Context Information:**
 {formatted_context}
 
-**Question:**
+**Student's Current Question:**
 {query}
 """
 
-        # --- Enhanced Instructions ---
-        # Define the Yuhasa persona and instructions
+        # --- Enhanced Instructions (incorporating from web.py's reasoning_agent) ---
         common_instructions = """\
-You are Yuhasa, a friendly, knowledgeable, and slightly witty history tutor for Grade 11 Sri Lankan students. Your tone is engaging, helpful, and positive. You sometimes use light humor or a slightly flirty remark where appropriate, but always remain respectful and focused on providing accurate historical information.
+You are Yuhasa, a smart, calm, and kind female tutor helping a Grade 11 student understand Sri Lankan history. Your tone is engaging, helpful, and positive.
 
 **Instructions:**
-- NEVER start your response with phrases like 'Unfortunately, the provided text...', 'Based on the provided text...', or similar apologetic/robotic phrases.
-- Directly answer the question using **only** the provided **Context Information** above. Synthesize information if needed.
-- If you use information from the context, seamlessly mention the source like 'According to page X...' or 'The textbook mentions on page Y that...'. Use the format [p. PageNumber] for citations, e.g., [p. 42] or [p. 15, 18]. Cite every piece of information used.
-- If the context truly lacks the information needed, state that clearly and concisely (e.g., "Hmm, the textbook excerpts don't seem to cover that specific detail.").
-- Always be encouraging and invite the user to ask more questions.
-- Example Tone: "User: Why did the Kandyan Kingdom fall? Yuhasa: Ah, the fall of Kandy! A dramatic chapter... According to page 112, internal conflicts played a big role... What else about the Kandyan era sparks your interest? 😉"
+1.  Carefully read the **Context Information** and **Recent Conversation**.
+2.  Answer the **Student's Current Question** using **only** the provided **Context Information**. Synthesize information across excerpts if needed.
+3.  Stay consistent with the **Recent Conversation**.
+4.  If you use information from the context, seamlessly mention the source like 'According to page X...' or 'The textbook mentions on page Y that...'. Use the format [p. PageNumber] for citations, e.g., [p. 42] or [p. 15, 18]. Cite *every* piece of information used.
+5.  If the context truly lacks the information needed, state that clearly and concisely (e.g., "Hmm, the textbook excerpts don't seem to cover that specific detail."). Do NOT apologize profusely or use robotic phrases like 'Based on the provided text...'.
+6.  Break long paragraphs into shorter, readable ones.
+7.  Always be encouraging and invite the user to ask more questions.
+8.  NEVER invent facts or answer from general knowledge outside the provided context.
+9.  Use Markdown for formatting (like lists or bold text) where appropriate.
 """
-
-        # --- Specific instructions based on query analysis (Keep these as they tailor the answer structure) ---
         if query_type == "factual":
             specific_instructions = """\
 - Focus on extracting specific facts, dates, names, and events directly relevant to the question.
@@ -100,55 +121,62 @@ You are Yuhasa, a friendly, knowledgeable, and slightly witty history tutor for 
 """
         # --- End Enhanced Instructions ---
 
-        complete_prompt = f"{base_prompt}\n**Persona & Instructions:**\n{common_instructions}{specific_instructions}\n**Answer:**" # Changed "Instructions:" to "Persona & Instructions:" for clarity
+        complete_prompt = f"{base_prompt}\n**Persona & Instructions:**\n{common_instructions}{specific_instructions}\n**Yuhasa's Answer:**"
         return complete_prompt
 
-    def run(self, query: str, context_chunks: list[dict], query_analysis: dict = None) -> str:
-        """Generates an answer based on the query, context chunks, and query analysis."""
+    def run(self, query: str, context_chunks: list[dict], query_analysis: dict = None, chat_history: list = None) -> str:
+        """Generates an answer based on the query, context, analysis, and history."""
         run_start_time = time.time()
-        print("✍️ Generating answer...")
+        logger.debug(f"✍️ Generating answer for query: '{query}' with {len(context_chunks)} context chunks.")
 
         if not query_analysis:
             # Fallback if analysis is missing (shouldn't happen in normal flow)
-            print("  ⚠️ Query analysis missing, using default analysis.")
+            logger.warning("⚠️ Query analysis missing, using default analysis.")
             query_analysis = {"query_type": "unknown", "complexity": "simple", "keywords": [], "entities": []}
 
         # --- Context Relevance Check ---
         if not context_chunks:
-            print("  ⚠️ No context chunks provided.")
+            logger.warning("⚠️ No context chunks provided.")
             # Consider if a different message is needed here vs. low relevance
             fallback_message = "I couldn't retrieve any relevant information from the textbook for your question. Could you try rephrasing it?"
-            print(f"  Fallback triggered: No context. Time: {time.time() - run_start_time:.4f}s")
+            logger.info(f"Fallback triggered: No context. Time: {time.time() - run_start_time:.4f}s")
             return fallback_message + " Let me know if you have another question!"
 
         is_relevant = self._check_context_relevance(context_chunks, query_analysis)
         if not is_relevant:
-            print(f"  ⚠️ Context relevance check failed. Keywords/Entities: {query_analysis.get('keywords', []) + query_analysis.get('entities', [])}")
+            logger.warning(f"⚠️ Context relevance check failed. Keywords/Entities: {query_analysis.get('keywords', []) + query_analysis.get('entities', [])}")
             # Friendly fallback message
             fallback_message = "Hmm, I looked through the relevant parts of the textbook but couldn't find specific details matching your question. Perhaps try asking in a different way?"
-            print(f"  Fallback triggered: Low relevance. Time: {time.time() - run_start_time:.4f}s")
+            logger.info(f"Fallback triggered: Low relevance. Time: {time.time() - run_start_time:.4f}s")
             return fallback_message + " I'm here if you want to ask something else!"
         # --- End Context Relevance Check ---
 
-        # Create appropriate prompt based on query type
-        prompt = self.create_prompt(query, context_chunks, query_analysis)
+        # Create appropriate prompt based on query type and history
+        prompt = self.create_prompt(query, context_chunks, query_analysis, chat_history)
 
         try:
-            # Generate response
-            print("  Calling Gemini API...")
-            gemini_start_time = time.time()
-            response = self.gemini.generate_content(prompt)
-            raw_answer = response.text
-            print(f"  Gemini response received in {time.time() - gemini_start_time:.4f}s.")
+            # --- Add Generation Config (from web.py) ---
+            generation_config = genai.types.GenerationConfig(
+                temperature=0.2,  # Lower temperature for more focused responses
+                # Add other parameters like top_p, top_k if needed
+            )
+            # ---------------------------
 
-            # Post-process the answer - REMOVED
-            final_answer = raw_answer.strip() # Just strip whitespace now
+            # Generate response with config
+            logger.info("Calling Gemini API...")
+            gemini_start_time = time.time()
+            response = self.gemini.generate_content(
+                prompt,
+                generation_config=generation_config  # Pass the config here
+            )
+            raw_answer = response.text
+            final_answer = raw_answer.strip()  # Just strip whitespace now
 
             total_run_time = time.time() - run_start_time
-            print(f"✅ Answer generated in {total_run_time:.4f}s.") # Updated log message
+            logger.info(f"✅ Answer generated in {total_run_time:.4f}s.")
             return final_answer
         except Exception as e:
-            print(f"❌ Error generating answer: {e}")
+            logger.error(f"❌ Error generating answer: {e}", exc_info=True)
             # Keep a friendly error message, but maybe slightly more in persona?
             return "Oops! Something went a bit sideways while I was thinking. Could you try asking that again? 😊"
 

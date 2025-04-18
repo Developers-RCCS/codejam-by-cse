@@ -1,6 +1,9 @@
 import fitz  # PyMuPDF
 import re
+import logging  # Added import
 from collections import defaultdict
+
+logger = logging.getLogger(__name__)  # Get a logger for this module
 
 def detect_sections(doc):
     """Attempts to detect section headers throughout the document based on formatting clues."""
@@ -45,7 +48,13 @@ def detect_sections(doc):
 
 def load_and_chunk_pdf(pdf_path, chunk_size=500, overlap=100):
     """Loads PDF, chunks text respecting paragraphs, adds metadata with section detection."""
-    doc = fitz.open(pdf_path)
+    try:
+        doc = fitz.open(pdf_path)
+        logger.info(f"📄 Successfully opened PDF: {pdf_path}, Pages: {doc.page_count}")
+    except Exception as e:
+        logger.error(f"❌ Failed to open PDF: {pdf_path}, Error: {e}", exc_info=True)
+        return []
+
     chunks = []
     
     # First pass: detect sections across the document
@@ -57,7 +66,7 @@ def load_and_chunk_pdf(pdf_path, chunk_size=500, overlap=100):
     para_count_in_chunk = 0
     current_page = 1
     
-    print(f"📄 Processing PDF: {pdf_path}...")
+    logger.info(f"📄 Processing PDF: {pdf_path}...")
     
     for page_num, page in enumerate(doc):
         page_number = page_num + 1  # 1-based page number
@@ -124,17 +133,18 @@ def load_and_chunk_pdf(pdf_path, chunk_size=500, overlap=100):
             }
         })
     
-    print(f"✅ PDF processed. Generated {len(chunks)} chunks with section detection.")
+    logger.info(f"✅ PDF processed. Generated {len(chunks)} chunks with section detection.")
     return chunks
 
 # Example usage (optional)
-# if __name__ == '__main__':
-#     pdf_chunks = load_and_chunk_pdf("grade-11-history-text-book.pdf")
-#     print(f"Generated {len(pdf_chunks)} chunks.")
-#     if pdf_chunks:
-#         print("\n--- First Chunk Example ---")
-#         print(pdf_chunks[0]["text"])
-#         print("Metadata:", pdf_chunks[0]["metadata"])
-#         print("\n--- Last Chunk Example ---")
-#         print(pdf_chunks[-1]["text"])
-#         print("Metadata:", pdf_chunks[-1]["metadata"])
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)  # Configure logging for example
+    pdf_chunks = load_and_chunk_pdf("grade-11-history-text-book.pdf")
+    logger.info(f"Generated {len(pdf_chunks)} chunks.")
+    if pdf_chunks:
+        logger.info("\n--- First Chunk Example ---")
+        logger.info(pdf_chunks[0]["text"])
+        logger.info(f"Metadata: {pdf_chunks[0]['metadata']}")
+        logger.info("\n--- Last Chunk Example ---")
+        logger.info(pdf_chunks[-1]["text"])
+        logger.info(f"Metadata: {pdf_chunks[-1]['metadata']}")
