@@ -3,21 +3,8 @@ import numpy as np
 import re
 import logging
 from gemini_utils import embed_text
-import spacy
-from collections import defaultdict
 
 logger = logging.getLogger(__name__)  # Get a logger for this module
-
-# Load spaCy model for NER and dependency parsing
-try:
-    nlp = spacy.load("en_core_web_sm")
-    logger.info("✅ spaCy model 'en_core_web_sm' loaded successfully.")
-except OSError:
-    logger.error("❌ Error loading spaCy model 'en_core_web_sm'. Please run: python -m spacy download en_core_web_sm")
-    nlp = None
-
-# Initialize feedback storage
-feedback = defaultdict(list)
 
 def calculate_chunk_similarity(chunks):
     """Calculate similarity between chunks to avoid adding redundant content."""
@@ -84,60 +71,6 @@ def filter_redundant_chunks(chunks, similarity_threshold=0.85):
 
     logger.info(f"✅ Filtered out {len(sorted_chunks) - len(filtered_chunks)} redundant chunks (threshold > {similarity_threshold}).")
     return filtered_chunks
-
-def enhanced_filter_redundant_chunks(chunks, similarity_threshold=0.85):
-    """Remove chunks that are too similar to higher-ranked chunks based on confidence and advanced NLP techniques."""
-    if len(chunks) <= 1:
-        return chunks
-
-    # Ensure chunks are sorted by confidence descending before filtering
-    # This makes sure we keep the highest confidence chunk among similar ones
-    sorted_chunks = sorted(chunks, key=lambda x: x.get("confidence", 0), reverse=True)
-
-    similarities = calculate_chunk_similarity(sorted_chunks)
-    indices_to_remove = set()
-
-    # Mark lower-confidence chunks that are too similar to higher-confidence ones
-    for i, j, similarity in similarities:
-        # Since list is sorted by confidence (i < j implies confidence[i] >= confidence[j]),
-        # if similarity is high, mark the lower confidence chunk (j) for removal.
-        if similarity > similarity_threshold:
-            # Check if j is already marked for removal to avoid redundant checks
-            if j not in indices_to_remove:
-                 indices_to_remove.add(j)
-                 # logger.debug(f"Marking chunk {j} (conf: {sorted_chunks[j].get('confidence', 0):.2f}) as redundant to chunk {i} (conf: {sorted_chunks[i].get('confidence', 0):.2f}, sim: {similarity:.2f})")
-
-    # Create filtered list
-    filtered_chunks = [chunk for i, chunk in enumerate(sorted_chunks) if i not in indices_to_remove]
-
-    # Apply advanced NLP techniques for further filtering
-    if nlp:
-        for i, chunk in enumerate(filtered_chunks):
-            doc = nlp(chunk["text"].lower())
-            chunk_entities = [ent.text.lower() for ent in doc.ents]
-            chunk_keywords = [token.text.lower() for token in doc if token.dep_ in ("nsubj", "dobj", "pobj")]
-
-            for j, other_chunk in enumerate(filtered_chunks):
-                if i != j:
-                    other_doc = nlp(other_chunk["text"].lower())
-                    other_entities = [ent.text.lower() for ent in other_doc.ents]
-                    other_keywords = [token.text.lower() for token in other_doc if token.dep_ in ("nsubj", "dobj", "pobj")]
-
-                    if any(term in other_entities or term in other_keywords for term in chunk_entities + chunk_keywords):
-                        indices_to_remove.add(j)
-
-    filtered_chunks = [chunk for i, chunk in enumerate(filtered_chunks) if i not in indices_to_remove]
-
-    logger.info(f"✅ Enhanced filtered out {len(sorted_chunks) - len(filtered_chunks)} redundant chunks (threshold > {similarity_threshold}).")
-    return filtered_chunks
-
-def update_feedback(query: str, context_chunks: list[dict], relevance: bool):
-    """Update feedback loop with user interaction data."""
-    feedback[query].append({
-        "context_chunks": context_chunks,
-        "relevance": relevance
-    })
-    logger.debug(f"Feedback updated for query: '{query}' with relevance: {relevance}")
 
 def simple_keyword_score(text_lower, query_keywords_set):
     """Calculate a simple score based on keyword overlap."""
