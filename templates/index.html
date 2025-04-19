@@ -699,16 +699,6 @@
             }
             userInput.addEventListener('input', autoResizeTextarea);
 
-            // --- Initial Chat Loading ---
-            const initialChatHistory = JSON.parse('{{ chat_history | tojson | safe }}') || [];
-            initialChatHistory.forEach(msg => {
-                addMessageToChat(msg.sender, msg.message);
-            });
-            if (initialChatHistory.length === 0) {
-                 addMessageToChat('bot', 'Hi! Ask me anything about Grade 11 History.');
-            }
-            scrollToBottom(true); // Initial scroll without animation
-
             // --- Clear Chat Display ---
             function clearChatDisplay() {
                 // Remove all message elements, but keep the typing indicator
@@ -780,84 +770,36 @@
                  });
             }
 
-            // --- Send Message Function ---
+            // --- Send Message Function (updated to include chatId) ---
             async function sendMessage() {
                 const message = userInput.value.trim();
                 if (!message) return;
-
-                if (message.toLowerCase() === 'exit' || message.toLowerCase() === 'quit') {
-                    addMessageToChat('bot', '👋 Bye! Feel free to come back with more history questions anytime!');
-                    userInput.value = '';
-                    autoResizeTextarea();
-                    return;
-                }
-
                 addMessageToChat('user', message);
                 userInput.value = '';
                 autoResizeTextarea();
                 showTypingIndicator();
                 userInput.focus();
-
                 try {
-                    // Determine chat history to send
-                    let historyToSend = [];
-                    if (currentChatId) {
-                        // If loading a past chat, maybe fetch its *full* history?
-                        // For simplicity now, just send recent *displayed* messages like before.
-                        historyToSend = Array.from(chatContainer.querySelectorAll('.message')).slice(-10).map(msgDiv => {
-                            const isUser = msgDiv.classList.contains('user-message');
-                            const bubble = msgDiv.querySelector('.message-bubble');
-                            let textContent = bubble.textContent || "";
-                            return {
-                                sender: isUser ? 'user' : 'assistant', // Changed 'role' to 'sender'
-                                content: textContent.trim()
-                            };
-                        }).filter(msg => msg.content);
-                    } else {
-                         // New chat, send only the current interaction history
-                         historyToSend = Array.from(chatContainer.querySelectorAll('.message')).slice(-10).map(msgDiv => {
-                            const isUser = msgDiv.classList.contains('user-message');
-                            const bubble = msgDiv.querySelector('.message-bubble');
-                            let textContent = bubble.textContent || "";
-                            return {
-                                sender: isUser ? 'user' : 'assistant', // Changed 'role' to 'sender'
-                                content: textContent.trim()
-                            };
-                        }).filter(msg => msg.content);
-                    }
-
-                    // **TODO**: If currentChatId is set, the backend should ideally associate
-                    // this new message with that specific chat history for saving.
-                    // This might require sending the currentChatId in the request.
                     const requestBody = {
                         query: message,
-                        chat_history: historyToSend
-                        // Optionally add: chatId: currentChatId
+                        chat_history: [], // Not used, backend loads from file
+                        chat_id: currentChatId
                     };
-
                     const response = await fetch('/ask', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(requestBody)
                     });
-
                     if (!response.ok) {
                         const errorData = await response.json();
                         throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
                     }
-
                     const data = await response.json();
-
-                    if (data.error) {
-                         throw new Error(data.error);
-                    }
-
+                    if (data.error) throw new Error(data.error);
                     addMessageToChat('bot', data.answer);
-
+                    // After sending, reload chat history list to update titles
+                    await loadChatHistoryList();
                 } catch (error) {
-                    console.error('Error sending message:', error);
                     addMessageToChat('bot', `😥 Sorry, I encountered an error: ${error.message}. Please try again.`);
                 } finally {
                     hideTypingIndicator();
@@ -937,83 +879,108 @@
             // --- Load Specific Chat History ---
             async function loadChat(chatId) {
                 if (chatId === currentChatId) return; // Don't reload if already active
-
-                console.log(`Loading chat: ${chatId}`);
-                showTypingIndicator(); // Show loading state
+                showTypingIndicator();
                 try {
-                    // ** SIMULATED API CALL **
-                    // Replace with actual fetch call: e.g., await fetch(`/api/chat/${chatId}`)
-                    const simulatedHistory = {
-                        "chat1": [
-                            { sender: "user", message: "Tell me about the industrial revolution." },
-                            { sender: "bot", message: "The Industrial Revolution was a period of major technological, socioeconomic, and cultural change..." }
-                        ],
-                        "chat2": [
-                            { sender: "user", message: "Who was Napoleon Bonaparte?" },
-                            { sender: "bot", message: "Napoleon Bonaparte was a French military and political leader..." },
-                            { sender: "user", message: "When did he live?" },
-                            { sender: "bot", message: "He lived from 1769 to 1821." }
-                        ]
-                    };
-                    // const response = await fetch(`/api/chat/${chatId}`); // Real call
-                    // if (!response.ok) throw new Error(`Failed to load chat ${chatId}`);
-                    // const chatHistory = await response.json();
-                    const chatHistory = simulatedHistory[chatId] || []; // Use simulated data
-
+                    const response = await fetch(`/api/chat/${encodeURIComponent(chatId)}`);
+                    if (!response.ok) throw new Error('Could not load chat.');
+                    const data = await response.json();
+                    const chatHistory = data.chat || [];
                     clearChatDisplay();
                     chatHistory.forEach(msg => {
-                        // Adjust sender if needed based on backend format (e.g., role vs sender)
-                        addMessageToChat(msg.sender === 'user' ? 'user' : 'bot', msg.message);
+                        // Support both {sender, message} and {sender, content}
+                        const sender = msg.sender === 'user' ? 'user' : 'bot';
+                        const message = msg.message || msg.content || '';
+                        addMessageToChat(sender, message);
                     });
                     setActiveChatItem(chatId);
-                    scrollToBottom(true); // Scroll instantly after loading
-
+                    scrollToBottom(true);
                 } catch (error) {
-                    console.error('Error loading chat:', error);
-                    addMessageToChat('bot', `😥 Sorry, I couldn't load chat ${chatId}.`);
+                    clearChatDisplay();
+                    addMessageToChat('bot', `😥 Sorry, I couldn't load this chat. Please try again.`);
                 } finally {
                     hideTypingIndicator();
                 }
             }
 
             // --- Load Chat History List from Server ---
-            async function loadChatHistoryList() {
+            async function loadChatHistoryList(selectLatest = false) {
                 try {
-                    // ** SIMULATED API CALL **
-                    // Replace with actual fetch: e.g., await fetch('/api/chats')
-                    const simulatedChats = [
-                        { id: "chat1", name: "Industrial Revolution Q&A" },
-                        { id: "chat2", name: "Napoleon Bonaparte Facts" }
-                    ];
-                    // const response = await fetch('/api/chats'); // Real call
-                    // if (!response.ok) throw new Error('Failed to load chat list');
-                    // const chats = await response.json();
-                    const chats = simulatedChats; // Use simulated data
-
-                    chatHistoryList.innerHTML = ''; // Clear existing list
+                    const response = await fetch('/api/chats');
+                    if (!response.ok) throw new Error('Failed to load chat list');
+                    const data = await response.json();
+                    const chats = data.chats || [];
+                    chatHistoryList.innerHTML = '';
                     chats.forEach(chat => {
                         const li = document.createElement('li');
                         li.classList.add('chat-history-item');
-                        li.textContent = chat.name; // Use a display name
+                        li.textContent = chat.title || chat.id;
                         li.dataset.chatId = chat.id;
                         li.setAttribute('role', 'button');
-                        li.tabIndex = 0; // Make it focusable
-
+                        li.tabIndex = 0;
+                        // Add delete button
+                        const delBtn = document.createElement('button');
+                        delBtn.innerHTML = '🗑️';
+                        delBtn.title = 'Delete chat';
+                        delBtn.className = 'delete-chat-btn';
+                        delBtn.style.marginLeft = '10px';
+                        delBtn.onclick = (e) => {
+                            e.stopPropagation();
+                            deleteChat(chat.id);
+                        };
+                        li.appendChild(delBtn);
                         li.addEventListener('click', () => loadChat(chat.id));
                         li.addEventListener('keypress', (e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                                loadChat(chat.id);
-                            }
+                            if (e.key === 'Enter' || e.key === ' ') loadChat(chat.id);
                         });
                         chatHistoryList.appendChild(li);
                     });
-
-                    // Optionally, mark the initially loaded chat as active if applicable
-                    // setActiveChatItem(initialChatId); // Need initialChatId from backend
-
+                    // Optionally select the latest chat
+                    if (selectLatest && chats.length > 0) {
+                        loadChat(chats[0].id);
+                    }
                 } catch (error) {
-                    console.error('Error loading chat history list:', error);
-                    // Optionally display an error in the sidebar
+                    chatHistoryList.innerHTML = '<li style="color:red">Could not load chat history.</li>';
+                }
+            }
+
+            // --- New Chat Functionality ---
+            newChatButton.addEventListener('click', async () => {
+                try {
+                    const response = await fetch('/api/chat', { method: 'POST' });
+                    if (!response.ok) throw new Error('Could not create new chat.');
+                    const data = await response.json();
+                    currentChatId = data.chat_id;
+                    clearChatDisplay();
+                    addMessageToChat('bot', 'Hi! Ask me anything about Grade 11 History.');
+                    setActiveChatItem(currentChatId);
+                    await loadChatHistoryList();
+                } catch (error) {
+                    clearChatDisplay();
+                    addMessageToChat('bot', 'Could not start a new chat. Please try again.');
+                }
+            });
+
+            // --- Delete Chat Functionality ---
+            async function deleteChat(chatId) {
+                if (!confirm('Are you sure you want to delete this chat?')) return;
+                try {
+                    const response = await fetch(`/api/chat/${encodeURIComponent(chatId)}`, { method: 'DELETE' });
+                    if (!response.ok) throw new Error('Could not delete chat.');
+                    // If deleted chat was active, switch to most recent or new chat
+                    await loadChatHistoryList();
+                    if (currentChatId === chatId) {
+                        // Try to load the most recent chat
+                        const resp = await fetch('/api/chats');
+                        const data = await resp.json();
+                        if (data.chats && data.chats.length > 0) {
+                            loadChat(data.chats[0].id);
+                        } else {
+                            // No chats left, start a new one
+                            newChatButton.click();
+                        }
+                    }
+                } catch (error) {
+                    alert('Could not delete chat. Please try again.');
                 }
             }
 
@@ -1034,16 +1001,8 @@
                 alert('Text-to-speech functionality is not yet implemented.');
             });
 
-            newChatButton.addEventListener('click', () => {
-                clearChatDisplay();
-                setActiveChatItem(null); // Deactivate sidebar items
-                addMessageToChat('bot', 'Hi! Ask me anything about Grade 11 History.'); // Reset to initial message
-                userInput.focus();
-                // Potentially notify backend to start a new chat session/ID
-            });
-
             // --- Initial Setup ---
-            loadChatHistoryList(); // Load the list of chats on page load
+            loadChatHistoryList(true); // Load the list of chats and select latest on page load
             userInput.focus();
             autoResizeTextarea();
         });
