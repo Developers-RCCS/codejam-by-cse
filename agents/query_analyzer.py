@@ -9,7 +9,7 @@ import nltk
 from nltk.corpus import stopwords
 from .base import BaseAgent
 from gemini_utils import embed_text
-from utils.text_utils import simple_keyword_score, simple_entity_score, section_relevance_score
+from utils.chunk_utils import simple_keyword_score, simple_entity_score, section_relevance_score
 from config import Config
 
 logger = logging.getLogger(__name__)
