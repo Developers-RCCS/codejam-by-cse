@@ -1,34 +1,32 @@
 # agents/generator.py
 import re
 import time
-import random
-import logging  # Added import
+import logging
 import google.generativeai as genai
 from .base import BaseAgent
 from gemini_utils import setup_gemini
-from utils.messages import get_random_message, NOT_FOUND_MESSAGES, CLOSING_REMARKS, PLAYFUL_FOLLOWUPS
 from utils.text_utils import post_process_answer, format_multi_part_answer
-from config import Config  # Import the Config class
+from config import Config
 
-logger = logging.getLogger(__name__)  # Get a logger for this module
+logger = logging.getLogger(__name__)
 
-# Example Q&A pairs for the Yuhasa persona
+# Revised Q&A pairs for a direct, factual persona
 EXAMPLE_QA_PAIRS = """
 Student: Why should I study history?
-Yuhasa: Because time travel is expensive, but a good question is free! 😉 History is like a treasure hunt—let's see what we can discover together! The textbook [p. 3] explains how knowing our past helps shape our future. What else can I help you explore today?
+Tutor: Studying history helps understand how the past shapes the future [p. 3, Section: Introduction]. It provides context for current events and societal structures.
 
 Student: Who was the first king of Sri Lanka?
-Yuhasa: Ah, diving into royal affairs, are we? 📚 According to our textbook [p. 15], King Vijaya was the first recorded ruler of Sri Lanka in 543 BCE. He arrived from North India and established the kingdom that would evolve into modern Sri Lanka. Pretty impressive origin story, right? Let's see what other secrets history is hiding!
+Tutor: According to the provided text, King Vijaya was the first recorded ruler of Sri Lanka, arriving in 543 BCE from North India [p. 15, Section: Early Kingdoms]. He established the initial kingdom.
 
 Student: What's the difference between primary and secondary sources?
-Yuhasa: Ooh, clever question! Primary sources are the historical "selfies" – original documents from the time period like diaries or artifacts. Secondary sources are more like the history textbook [p. 7] we're using – analysis written after the fact. One gives you raw history, the other gives you the juicy interpretations! History is always more fun with you asking the questions! 😊
+Tutor: Primary sources are original materials from the time period being studied, such as diaries or artifacts [p. 7, Section: Historical Sources]. Secondary sources are analyses or interpretations created after the events, like the textbook itself [p. 7, Section: Historical Sources].
 """
 
 class GeneratorAgent(BaseAgent):
     """Agent responsible for generating answers using Gemini."""
     def __init__(self):
         logger.info("✨ Initializing Gemini model...")
-        self.config = Config()  # Initialize config
+        self.config = Config()
         try:
             self.gemini = setup_gemini()
             logger.info("✅ Gemini model initialized successfully.")
@@ -37,31 +35,49 @@ class GeneratorAgent(BaseAgent):
             self.gemini = None
 
     def _check_context_relevance(self, context_chunks: list[dict], query_analysis: dict) -> bool:
-        """Check if any context chunk contains keywords or entities from the query."""
+        """Check if any context chunk contains keywords or entities from the query.
+
+        Args:
+            context_chunks: A list of dictionaries, where each dictionary represents a context chunk
+                            and should have a "text" key.
+            query_analysis: A dictionary containing the analysis of the user query, expected to have
+                            "keywords" and "entities" keys (lists of strings).
+
+        Returns:
+            True if any chunk contains a keyword or entity, False otherwise.
+        """
         keywords = query_analysis.get("keywords", [])
         entities = query_analysis.get("entities", [])
         search_terms = set([k.lower() for k in keywords] + [e.lower() for e in entities])
+        logger.debug(f"Checking context relevance. Search terms: {search_terms}")
 
         if not search_terms:
-            return True  # No specific terms to check against, assume relevance
+            logger.debug("No keywords/entities found in query analysis, assuming context is relevant.")
+            return True  # If no terms to check, assume relevance or let LLM decide
 
-        for chunk in context_chunks:
+        found_relevant_chunk = False
+        for i, chunk in enumerate(context_chunks):
             text_lower = chunk.get("text", "").lower()
             for term in search_terms:
-                # Use word boundaries for better matching, especially for shorter terms
                 if re.search(r'\b' + re.escape(term) + r'\b', text_lower):
-                    return True  # Found at least one relevant term in one chunk
-        return False  # No relevant terms found in any chunk
+                    logger.debug(f"Found relevant term '{term}' in context chunk {i+1}.")
+                    found_relevant_chunk = True
+                    break  # Found a relevant term in this chunk, move to next chunk if needed (though one is enough)
+            if found_relevant_chunk:
+                break  # Found a relevant chunk, no need to check further
+
+        if not found_relevant_chunk:
+            logger.warning("No relevant terms found in any context chunk.")
+
+        return found_relevant_chunk
 
     def create_prompt(self, query: str, context_chunks: list[dict], query_analysis: dict, chat_history: list = None) -> str:
         """Create an effective prompt based on query type, context, and history."""
-        # Extract context text - if chunks have a confidence score, sort by it
         if context_chunks and "confidence" in context_chunks[0]:
             sorted_chunks = sorted(context_chunks, key=lambda x: x.get("confidence", 0), reverse=True)
         else:
             sorted_chunks = context_chunks
 
-        # Format context with metadata for better traceability
         formatted_context = ""
         for i, chunk in enumerate(sorted_chunks):
             page = chunk["metadata"].get("page", "Unknown")
@@ -69,91 +85,74 @@ class GeneratorAgent(BaseAgent):
             formatted_context += f"\n--- Excerpt {i+1} [Page {page}, Section: {section}] ---\n"
             formatted_context += chunk["text"]
             formatted_context += "\n"
+        logger.debug(f"Formatted {len(sorted_chunks)} context chunks for prompt.")
 
-        # 🧠 Construct real-time dialogue memory (from web.py's reasoning_agent)
         history_str = ""
         if chat_history:
             history_str += "\n\n## Conversation History:\n"
-            # Limit history length for context window
             limited_history = chat_history[-self.config.MAX_HISTORY_MESSAGES:]
-            for msg in limited_history:  # Iterate over the history from the request
-                # Use .get() for safety, although frontend should now send 'sender' and 'content'
+            for msg in limited_history:
                 sender = msg.get("sender")
-                content = msg.get("content", "")  # Use 'content' key
+                content = msg.get("message", "")
+                role = "Student" if sender == "user" else "Tutor"
+                history_str += f"{role}: {content}\n"
+            logger.debug(f"Added {len(limited_history)} messages from chat history to prompt.")
 
-                if sender and content:  # Only process if both sender and content exist and are not empty
-                    role = "Student" if sender == "user" else "Yuhasa"
-                    history_str += f"{role}: {content}\n"
-                else:
-                    # Log a warning if a message is skipped due to missing keys/content
-                    logger.warning(f"Skipping potentially malformed chat history message: {msg}")
-
-        # Prepare context string
-
-        # Get query type and complexity
         query_type = query_analysis.get("query_type", "unknown")
         complexity = query_analysis.get("complexity", "simple")
 
-        # Base prompt structure - Incorporating history
-        base_prompt = f"""**Recent Conversation:**
-{history_str}
-**Context Information:**
+        base_prompt = f"""**Context Information:**
 {formatted_context}
 
+**Conversation History:**
+{history_str}
 **Student's Current Question:**
 {query}
 """
 
-        # --- Enhanced Instructions (incorporating from web.py's reasoning_agent) ---
         common_instructions = f"""\
-You are Yuhasa, a caring, supportive, and gently playful history tutor for Grade 11 students. You make learning feel like a fun adventure and create a comfortable environment for exploration and questions.
-
-Use light humor, clever encouragement, and friendly emojis like 😊, 😄, 😉, 📚 to keep the conversation engaging. Never use kissing or romantic emojis.
-
-Compliment student curiosity and make history feel like an exciting journey with a favorite teacher.
+You are a factual history tutor bot. Your goal is to provide direct, detailed, and accurate answers based *only* on the provided **Context Information**.
 
 **Instructions:**
-1. Carefully read the **Context Information** and **Recent Conversation**.
-2. Answer the **Student's Current Question** using **only** the provided **Context Information**. 
-3. Stay consistent with the **Recent Conversation**.
-4. Cite sources using format [p. PageNumber], e.g., [p. 42] or [p. 15, 18].
-5. If information isn't in context, kindly say so without robotic phrases.
-6. Break long paragraphs into shorter, readable ones.
-7. End with a positive invitation like "What else can I help you explore today?"
-8. NEVER invent facts outside the provided context.
-9. Use Markdown formatting where helpful.
+1.  Read the **Context Information** and **Conversation History** carefully.
+2.  Answer the **Student's Current Question** directly and precisely using **only** the provided **Context Information**. Synthesize information across multiple context excerpts if necessary to form a complete answer.
+3.  Cite **every** factual statement, detail, date, or name using the format `[p. PageNumber, Section: SectionName]`. If multiple sources support a statement, cite them all.
+4.  If the context contains partial or indirect information, synthesize the best possible answer, explicitly stating what is known and what is not, citing the supporting evidence. Do **not** apologize for missing information.
+5.  If the **Context Information** genuinely contains **no relevant information** to answer any part of the question (after careful checking), state clearly: "The provided context does not contain information about [specific topic of the question]." Do not apologize or use filler phrases like "Unfortunately..." or "I couldn't find...".
+6.  Structure multi-part answers or lists using Markdown (e.g., bullet points `*`, numbered lists `1.`).
+7.  Maintain a neutral, informative, and direct tone. Do not use emojis, apologies ("sorry", "unfortunately"), or unnecessary conversational filler ("What else can I help you with?", "Is there anything else?").
+8.  **Strict Rule:** Never hedge (e.g., "might be," "could be," "suggests") if the context provides a direct fact. Never invent facts or information not present in the **Context Information**.
 
 **Example Q&A Pairs:**
 {EXAMPLE_QA_PAIRS}
 """
         if query_type == "factual":
             specific_instructions = """\
-- Focus on extracting specific facts, dates, names, and events directly relevant to the question.
-- Keep the answer concise and to the point.
+- Focus on extracting specific facts, dates, names, and events directly relevant to the question. Ensure every fact is cited.
 """
         elif query_type == "causal/analytical":
             specific_instructions = """\
-- Explain the 'why' or 'how' behind events or developments, using evidence from the context.
-- Structure your analysis logically (e.g., cause-effect, sequence of events).
+- Explain the 'why' or 'how' behind events or developments, using cited evidence from the context.
+- Structure your analysis logically (e.g., cause-effect, sequence of events), citing each point.
 """
         elif query_type == "comparative":
             specific_instructions = """\
-- Clearly identify the similarities and differences between the items being compared.
-- Organize the comparison point-by-point.
+- Clearly identify the similarities and differences, citing the source for each point of comparison.
+- Organize the comparison point-by-point using Markdown.
 """
-        else:  # Default/unknown
+        else:
             specific_instructions = """\
-- Provide a clear and accurate explanation based on the context.
+- Provide a clear and accurate explanation based strictly on the cited context.
 """
 
         if complexity == "complex":
             specific_instructions += """\
-- This question may have multiple parts. Ensure you address all aspects thoroughly.
-- Structure your answer clearly, perhaps using bullet points if helpful.
+- This question may have multiple parts. Address all aspects thoroughly, citing each part.
+- Structure your answer clearly using Markdown headings or lists.
 """
-        # --- End Enhanced Instructions ---
 
-        complete_prompt = f"{base_prompt}\n**Persona & Instructions:**\n{common_instructions}{specific_instructions}\n**Yuhasa's Answer:**"
+        complete_prompt = f"{base_prompt}\n**Tutor Persona & Instructions:**\n{common_instructions}{specific_instructions}\n**Tutor's Answer:**"
+        logger.debug(f"Created prompt for query type '{query_type}' and complexity '{complexity}'. Prompt length: {len(complete_prompt)}")
         return complete_prompt
 
     def run(self, query: str, context_chunks: list[dict], query_analysis: dict = None, chat_history: list = None) -> str:
@@ -162,79 +161,77 @@ Compliment student curiosity and make history feel like an exciting journey with
         logger.debug(f"✍️ Generating answer for query: '{query}' with {len(context_chunks)} context chunks.")
 
         if not query_analysis:
-            # Fallback if analysis is missing (shouldn't happen in normal flow)
             logger.warning("⚠️ Query analysis missing, using default analysis.")
             query_analysis = {"query_type": "unknown", "complexity": "simple", "keywords": [], "entities": []}
 
-        # --- Context Relevance Check ---
         if not context_chunks:
             logger.warning("⚠️ No context chunks provided.")
-            fallback_message = random.choice(NOT_FOUND_MESSAGES)
+            # Adhering to strict non-apology rule
+            fallback_message = "The provided context does not contain information to answer this question."
             logger.info(f"Fallback triggered: No context. Time: {time.time() - run_start_time:.4f}s")
-            # Append a random closing phrase even to fallback messages
-            return fallback_message + " " + random.choice(CLOSING_REMARKS)
+            return fallback_message
 
         is_relevant = self._check_context_relevance(context_chunks, query_analysis)
         if not is_relevant:
             logger.warning(f"⚠️ Context relevance check failed. Keywords/Entities: {query_analysis.get('keywords', []) + query_analysis.get('entities', [])}")
-            fallback_message = random.choice(NOT_FOUND_MESSAGES)
+            # Adhering to strict non-apology rule
+            fallback_message = "The provided context does not contain information relevant to this question."
             logger.info(f"Fallback triggered: Low relevance. Time: {time.time() - run_start_time:.4f}s")
-            # Append a random closing phrase even to fallback messages
-            return fallback_message + " " + random.choice(CLOSING_REMARKS)
-        # --- End Context Relevance Check ---
+            return fallback_message
 
-        # Create appropriate prompt based on query type and history
         prompt = self.create_prompt(query, context_chunks, query_analysis, chat_history)
 
         try:
-            # --- Add Generation Config (from web.py) ---
             generation_config = genai.types.GenerationConfig(
-                temperature=0.2,  # Lower temperature for more focused responses
-                # Add other parameters like top_p, top_k if needed
+                temperature=0.1,  # Low temperature for factual recall
             )
-            # ---------------------------
 
-            # Generate response with config
-            logger.info("Calling Gemini API...")
+            logger.info("📞 Calling Gemini API...")
             gemini_start_time = time.time()
             response = self.gemini.generate_content(
                 prompt,
-                generation_config=generation_config  # Pass the config here
+                generation_config=generation_config
             )
-            raw_answer = response.text
-            
-            # Apply post-processing to remove robotic language and make more natural
+            gemini_duration = time.time() - gemini_start_time
+            logger.info(f"✅ Gemini API call successful. Duration: {gemini_duration:.4f}s")
+
+            # Handle potential safety blocks or empty responses
+            if not response.parts:
+                logger.warning("⚠️ Gemini response has no parts (potentially blocked or empty).")
+                # Provide a neutral fallback consistent with instructions
+                return "The model could not generate a response based on the provided context."
+            # Assuming response.text is the primary way to get content
+            # Check if response.text exists and is not empty
+            if hasattr(response, 'text') and response.text:
+                raw_answer = response.text
+                logger.debug(f"Raw answer received: {raw_answer[:200]}...")  # Log beginning of raw answer
+            else:
+                logger.warning("⚠️ Gemini response does not contain text or is empty.")
+                # Provide a neutral fallback consistent with instructions
+                return "The model generated an empty response based on the provided context."
+
+            processing_start_time = time.time()
             processed_answer = post_process_answer(raw_answer)
-            
-            # For complex questions, format the answer with better paragraph structure
+            logger.debug(f"Processed answer: {processed_answer[:200]}...")  # Log beginning of processed answer
+
             complexity = query_analysis.get("complexity", "simple")
             if complexity == "complex":
                 final_answer = format_multi_part_answer(processed_answer, complexity)
+                logger.debug("Formatted answer for complex query.")
             else:
                 final_answer = processed_answer
 
-            # Append a random closing phrase if it doesn't already have one
-            for closing in CLOSING_REMARKS:
-                if final_answer.lower().endswith(closing.lower()):
-                    break
-            else:  # No closing remark found
-                closing_phrase = random.choice(CLOSING_REMARKS)
-                # Ensure there's a space before appending if the answer doesn't end with punctuation
-                if final_answer and final_answer[-1] not in ['.', '!', '?', ' ']:
-                    final_answer += "."
-                    
-                if not final_answer.endswith(" "):
-                    final_answer += " "
-                    
-                final_answer += closing_phrase
-
+            processing_duration = time.time() - processing_start_time
             total_run_time = time.time() - run_start_time
-            logger.info(f"✅ Answer generated in {total_run_time:.4f}s.")
+            logger.info(f"⚙️ Answer processing finished. Duration: {processing_duration:.4f}s")
+            logger.info(f"✅ Answer generated successfully. Total run time: {total_run_time:.4f}s.")
+            # Note: Benchmarking target of <2s depends heavily on external API latency.
+            if total_run_time > 2.0:
+                logger.warning(f"⏱️ Total response time ({total_run_time:.4f}s) exceeded target of 2 seconds.")
             return final_answer
         except Exception as e:
             logger.error(f"❌ Error generating answer: {e}", exc_info=True)
-            # Keep a friendly error message, but maybe slightly more in persona?
-            error_message = "Oops! Something went a bit sideways while I was thinking. Could you try asking that again? 😊"
-            # Append a random closing phrase even to error messages
-            return error_message + " " + random.choice(CLOSING_REMARKS)
+            # Provide a neutral error message
+            error_message = "An error occurred while generating the response."
+            return error_message
 
