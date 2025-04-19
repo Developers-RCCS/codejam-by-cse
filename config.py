@@ -8,3 +8,4 @@ GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY")
 class Config:
     GEMINI_API_KEY = GEMINI_API_KEY
     MAX_HISTORY_MESSAGES = 10
+    DEBUG_MODE = os.getenv("DEBUG_MODE", "False").lower() == "true"
