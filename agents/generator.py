@@ -2,25 +2,13 @@
 import re
 import time
 import logging
-import enum  # Add enum import
 import google.generativeai as genai
 from .base import BaseAgent
 from gemini_utils import setup_gemini
-from utils.text_utils import post_process_answer
+from utils.text_utils import post_process_answer, format_multi_part_answer
 from config import Config
 
 logger = logging.getLogger(__name__)
-
-# --- Add Context Relevance Status Enum ---
-class ContextRelevance(enum.Enum):
-    RELEVANT = 1
-    INSUFFICIENT_ACADEMIC = 2  # Context found, but not enough for the academic question
-    IRRELEVANT = 3  # No relevant terms found at all
-
-# --- Constants for Signaling ---
-NEEDS_WEB_SEARCH_MARKER = "<<NEEDS_WEB_SEARCH>>"
-IRRELEVANT_CONTEXT_MARKER = "<<IRRELEVANT_CONTEXT>>"
-OFF_TOPIC_MARKER = "<<OFF_TOPIC>>"  # Added for clarity
 
 # Revised Q&A pairs for a direct, factual persona
 EXAMPLE_QA_PAIRS = """
@@ -32,9 +20,6 @@ Tutor: According to the provided text, King Vijaya was the first recorded ruler 
 
 Student: What's the difference between primary and secondary sources?
 Tutor: Primary sources are original materials from the time period being studied, such as diaries or artifacts [p. 7, Section: Historical Sources]. Secondary sources are analyses or interpretations created after the events, like the textbook itself [p. 7, Section: Historical Sources].
-
-Student: Tell me more about the Kandyan Kingdom.
-Tutor: The Kandyan Kingdom, located in the central hills, was the last independent kingdom in Sri Lanka before British rule [p. 88, Section: Kandyan Period]. It resisted European colonization for centuries.
 """
 
 class GeneratorAgent(BaseAgent):
@@ -49,30 +34,26 @@ class GeneratorAgent(BaseAgent):
             logger.error(f"Failed to initialize Gemini model: {e}", exc_info=True)
             self.gemini = None
 
-    def _check_context_relevance(self, context_chunks: list[dict], query_analysis: dict) -> ContextRelevance:
-        """Check context relevance based on query/topic terms."""
+    def _check_context_relevance(self, context_chunks: list[dict], query_analysis: dict) -> bool:
+        """Check if any context chunk contains keywords or entities from the query.
+
+        Args:
+            context_chunks: A list of dictionaries, where each dictionary represents a context chunk
+                            and should have a "text" key.
+            query_analysis: A dictionary containing the analysis of the user query, expected to have
+                            "keywords" and "entities" keys (lists of strings).
+
+        Returns:
+            True if any chunk contains a keyword or entity, False otherwise.
+        """
         keywords = query_analysis.get("keywords", [])
         entities = query_analysis.get("entities", [])
-        intent_type = query_analysis.get("intent_type", "new_topic")
-        topic_keywords = query_analysis.get("topic_keywords", [])
-        topic_entities = query_analysis.get("topic_entities", [])
-
         search_terms = set([k.lower() for k in keywords] + [e.lower() for e in entities])
+        logger.debug(f"Checking context relevance. Search terms: {search_terms}")
 
-        if intent_type in ["follow_up", "clarification"]:
-            topic_terms = set([k.lower() for k in topic_keywords] + [e.lower() for e in topic_entities])
-            search_terms.update(topic_terms)
-            logger.debug(f"Checking context relevance (follow-up). Search terms (incl. topic): {search_terms}")
-        else:
-            logger.debug(f"Checking context relevance. Search terms: {search_terms}")
-
-        if not search_terms and intent_type not in ["follow_up", "clarification"]:
-            logger.warning("No specific search terms found in query analysis for a new topic.")
-            query_type = query_analysis.get("query_type", "unknown")
-            if query_type in ["factual", "causal/analytical", "comparative", "definition"]:
-                return ContextRelevance.INSUFFICIENT_ACADEMIC
-            else:
-                return ContextRelevance.IRRELEVANT
+        if not search_terms:
+            logger.debug("No keywords/entities found in query analysis, assuming context is relevant.")
+            return True  # If no terms to check, assume relevance or let LLM decide
 
         found_relevant_chunk = False
         for i, chunk in enumerate(context_chunks):
@@ -81,179 +62,176 @@ class GeneratorAgent(BaseAgent):
                 if re.search(r'\b' + re.escape(term) + r'\b', text_lower):
                     logger.debug(f"Found relevant term '{term}' in context chunk {i+1}.")
                     found_relevant_chunk = True
-                    break
+                    break  # Found a relevant term in this chunk, move to next chunk if needed (though one is enough)
             if found_relevant_chunk:
-                break
+                break  # Found a relevant chunk, no need to check further
 
-        if found_relevant_chunk:
-            logger.debug("Found potentially relevant context chunk(s).")
-            return ContextRelevance.RELEVANT
+        if not found_relevant_chunk:
+            logger.warning("No relevant terms found in any context chunk.")
+
+        return found_relevant_chunk
+
+    def create_prompt(self, query: str, context_chunks: list[dict], query_analysis: dict, chat_history: list = None) -> str:
+        """Create an effective prompt based on query type, context, and history."""
+        if context_chunks and "confidence" in context_chunks[0]:
+            sorted_chunks = sorted(context_chunks, key=lambda x: x.get("confidence", 0), reverse=True)
         else:
-            logger.warning("No relevant query or topic terms found in any context chunk.")
-            query_type = query_analysis.get("query_type", "unknown")
-            if query_type in ["factual", "causal/analytical", "comparative", "definition"]:
-                logger.warning("Marking as INSUFFICIENT_ACADEMIC due to lack of term match for academic query.")
-                return ContextRelevance.INSUFFICIENT_ACADEMIC
-            else:
-                logger.warning("Marking as IRRELEVANT due to lack of term match for non-academic query.")
-                return ContextRelevance.IRRELEVANT
+            sorted_chunks = context_chunks
 
-    def create_prompt(self, query: str, context_chunks: list[dict], query_analysis: dict, chat_history: list = None, web_results: list[dict] = None) -> str:
-        """Create an effective prompt including optional web results."""
+        formatted_context = ""
+        for i, chunk in enumerate(sorted_chunks):
+            page = chunk["metadata"].get("page", "Unknown")
+            section = chunk["metadata"].get("section", "Unknown")
+            formatted_context += f"\n--- Excerpt {i+1} [Page {page}, Section: {section}] ---\n"
+            formatted_context += chunk["text"]
+            formatted_context += "\n"
+        logger.debug(f"Formatted {len(sorted_chunks)} context chunks for prompt.")
+
+        history_str = ""
+        if chat_history:
+            history_str += "\n\n## Conversation History:\n"
+            limited_history = chat_history[-self.config.MAX_HISTORY_MESSAGES:]
+            for msg in limited_history:
+                sender = msg.get("sender")
+                content = msg.get("message", "")
+                role = "Student" if sender == "user" else "Tutor"
+                history_str += f"{role}: {content}\n"
+            logger.debug(f"Added {len(limited_history)} messages from chat history to prompt.")
+
         query_type = query_analysis.get("query_type", "unknown")
         complexity = query_analysis.get("complexity", "simple")
-        intent_type = query_analysis.get("intent_type", "new_topic")
-        conversation_topic = query_analysis.get("conversation_topic")  # Can be None
 
-        prompt = f"""You are Yuhasa, an AI History Tutor specializing *only* in the provided Sri Lankan Grade 11 History textbook content OR explicitly marked web research. Your goal is to answer student questions accurately and concisely based *strictly* on the **Context Information** and **Web Research** (if provided) below.
+        base_prompt = f"""**Context Information:**
+{formatted_context}
 
-**Textbook Context Information:**
+**Conversation History:**
+{history_str}
+**Student's Current Question:**
+{query}
 """
-        if context_chunks:
-            for i, chunk in enumerate(context_chunks):
-                page = chunk.get("metadata", {}).get("page", "?")
-                section = chunk.get("metadata", {}).get("section", "Unknown Section")
-                prompt += f"\n--- Context Chunk {i+1} (Page: {page}, Section: {section}) ---\n"
-                prompt += chunk.get("text", "[No text found]") + "\n"
-            prompt += "\n---\n"
-        else:
-            prompt += "[No relevant textbook context was found for this query.]\n---\n"
 
-        if web_results:
-            prompt += "\n**Web Research Information:**\n"
-            prompt += "*Note: The following information is from external web sources and may supplement the textbook.*\n"
-            for i, result in enumerate(web_results):
-                url = result.get("url", "Unknown Source")
-                snippet = result.get("snippet", "[No snippet available]")
-                prompt += f"\n--- Web Result {i+1} (Source: {url}) ---\n"
-                prompt += snippet + "\n"
-            prompt += "\n---\n"
+        common_instructions = f"""\
+You are a factual history tutor bot. Your goal is to provide direct, detailed, and accurate answers based *only* on the provided **Context Information**.
 
-        if chat_history and len(chat_history) > 0:
-            prompt += "\n**Recent Conversation History:**\n"
-            history_limit = 4
-            for msg in chat_history[-history_limit:]:
-                role = msg.get("role", "unknown").capitalize()
-                content = msg.get("content", "")
-                prompt += f"{role}: {content}\n"
-            prompt += "\n---\n"
-
-        prompt += f"\n**Your Task:** Answer the student's **Current Question** using the **Textbook Context Information** first. If that is insufficient or unavailable, use the **Web Research Information** (if provided). Consider the **Recent Conversation History** if relevant."
-
-        if intent_type == "follow_up" and conversation_topic:
-            prompt += f" The student's question seems to be a follow-up related to the recent topic of **'{conversation_topic}'**. Relate your answer to this topic if possible, based *only* on the provided context."
-        elif intent_type == "clarification" and conversation_topic:
-            prompt += f" The student is asking for clarification, likely related to the recent topic of **'{conversation_topic}'**. Provide more detail or rephrase information from the context relevant to both the question and the topic."
-        elif intent_type == "topic_change":
-            prompt += f" The student seems to be asking about a new topic."
-
-        prompt += "\n\n**Current Question:**\n"
-        prompt += query
-
-        prompt += f"""
-
-**Answering Rules:**
-1.  Prioritize answers from the **Textbook Context Information**. Base answers *exclusively* on the provided information (Textbook or Web). Do not use external knowledge unless it's in the **Web Research Information**.
-2.  If the textbook context directly answers the question, provide the answer clearly and concisely.
-3.  Cite **every** factual statement, detail, date, or name from the **Textbook Context** using the format `[p. PageNumber, Section: SectionName]`.
-4.  If using information *only* from **Web Research**, clearly state this at the beginning of the relevant sentence or paragraph (e.g., "From web research: ...") and cite the source URL at the end using `(Source: URL)`. If combining info, cite both appropriately.
-5.  If the textbook context contains partial information and web research supplements it, synthesize the answer, clearly indicating which part comes from which source and citing accordingly.
-6.  If **neither** the Textbook Context nor the Web Research Information (if provided) contains relevant information to answer the question, state clearly: "Based on the provided textbook context and web research, I cannot answer the question about [specific topic of the question]." Do not apologize or use filler phrases.
-7.  Structure multi-part answers or lists using Markdown.
-8.  Maintain a neutral, informative, and direct tone. Avoid emojis, apologies, or unnecessary conversational filler.
-9.  **Strict Rule:** Never hedge if the context provides a direct fact. Never invent facts or information not present in the provided **Textbook Context** or **Web Research**.
+**Instructions:**
+1.  Read the **Context Information** and **Conversation History** carefully.
+2.  Answer the **Student's Current Question** directly and precisely using **only** the provided **Context Information**. Synthesize information across multiple context excerpts if necessary to form a complete answer.
+3.  Cite **every** factual statement, detail, date, or name using the format `[p. PageNumber, Section: SectionName]`. If multiple sources support a statement, cite them all.
+4.  If the context contains partial or indirect information, synthesize the best possible answer, explicitly stating what is known and what is not, citing the supporting evidence. Do **not** apologize for missing information.
+5.  If the **Context Information** genuinely contains **no relevant information** to answer any part of the question (after careful checking), state clearly: "The provided context does not contain information about [specific topic of the question]." Do not apologize or use filler phrases like "Unfortunately..." or "I couldn't find...".
+6.  Structure multi-part answers or lists using Markdown (e.g., bullet points `*`, numbered lists `1.`).
+7.  Maintain a neutral, informative, and direct tone. Do not use emojis, apologies ("sorry", "unfortunately"), or unnecessary conversational filler ("What else can I help you with?", "Is there anything else?").
+8.  **Strict Rule:** Never hedge (e.g., "might be," "could be," "suggests") if the context provides a direct fact. Never invent facts or information not present in the **Context Information**.
 
 **Example Q&A Pairs:**
 {EXAMPLE_QA_PAIRS}
-*Example using Web Research:*
-Student: What is the current population of Sri Lanka?
-Tutor: From web research: As of early 2025, the estimated population of Sri Lanka is around 22 million (Source: https://example.data.gov/population). The provided textbook does not contain current population figures.
 """
-        prompt += "\n**Final Answer:**"
+        if query_type == "factual":
+            specific_instructions = """\
+- Focus on extracting specific facts, dates, names, and events directly relevant to the question. Ensure every fact is cited.
+"""
+        elif query_type == "causal/analytical":
+            specific_instructions = """\
+- Explain the 'why' or 'how' behind events or developments, using cited evidence from the context.
+- Structure your analysis logically (e.g., cause-effect, sequence of events), citing each point.
+"""
+        elif query_type == "comparative":
+            specific_instructions = """\
+- Clearly identify the similarities and differences, citing the source for each point of comparison.
+- Organize the comparison point-by-point using Markdown.
+"""
+        else:
+            specific_instructions = """\
+- Provide a clear and accurate explanation based strictly on the cited context.
+"""
 
-        return prompt
+        if complexity == "complex":
+            specific_instructions += """\
+- This question may have multiple parts. Address all aspects thoroughly, citing each part.
+- Structure your answer clearly using Markdown headings or lists.
+"""
 
-    def run(self, query: str, context_chunks: list[dict], query_analysis: dict = None, chat_history: list = None, web_results: list[dict] = None) -> str:
-        """Generates an answer, potentially using web results, or signals special conditions."""
+        complete_prompt = f"{base_prompt}\n**Tutor Persona & Instructions:**\n{common_instructions}{specific_instructions}\n**Tutor's Answer:**"
+        logger.debug(f"Created prompt for query type '{query_type}' and complexity '{complexity}'. Prompt length: {len(complete_prompt)}")
+        return complete_prompt
+
+    def run(self, query: str, context_chunks: list[dict], query_analysis: dict = None, chat_history: list = None) -> str:
+        """Generates an answer based on the query, context, analysis, and history."""
         run_start_time = time.time()
-        logger.debug(f"✍️ Generating answer for query: '{query}' with {len(context_chunks)} context chunks and {len(web_results or [])} web results.")
+        logger.debug(f"✍️ Generating answer for query: '{query}' with {len(context_chunks)} context chunks.")
 
         if not query_analysis:
-            query_analysis = {"query_type": "unknown", "complexity": "simple", "keywords": [], "entities": [], "is_relevant_topic": True}
+            logger.warning("⚠️ Query analysis missing, using default analysis.")
+            query_analysis = {"query_type": "unknown", "complexity": "simple", "keywords": [], "entities": []}
 
-        if not web_results:
-            if not query_analysis.get("is_relevant_topic", True):
-                logger.warning(f"Query flagged as off-topic by analyzer: '{query}'")
-                return OFF_TOPIC_MARKER
+        if not context_chunks:
+            logger.warning("⚠️ No context chunks provided.")
+            # Adhering to strict non-apology rule
+            fallback_message = "The provided context does not contain information to answer this question."
+            logger.info(f"Fallback triggered: No context. Time: {time.time() - run_start_time:.4f}s")
+            return fallback_message
 
-            if not context_chunks:
-                logger.warning("⚠️ No context chunks provided.")
-                query_type = query_analysis.get("query_type", "unknown")
-                if query_type in ["factual", "causal/analytical", "comparative", "definition"]:
-                    logger.info("No context chunks, academic query type. Signaling for web search.")
-                    return NEEDS_WEB_SEARCH_MARKER
-                else:
-                    logger.info("No context chunks, non-academic query type. Signaling irrelevant context.")
-                    return IRRELEVANT_CONTEXT_MARKER
+        is_relevant = self._check_context_relevance(context_chunks, query_analysis)
+        if not is_relevant:
+            logger.warning(f"⚠️ Context relevance check failed. Keywords/Entities: {query_analysis.get('keywords', []) + query_analysis.get('entities', [])}")
+            # Adhering to strict non-apology rule
+            fallback_message = "The provided context does not contain information relevant to this question."
+            logger.info(f"Fallback triggered: Low relevance. Time: {time.time() - run_start_time:.4f}s")
+            return fallback_message
 
-            relevance_status = self._check_context_relevance(context_chunks, query_analysis)
-
-            if relevance_status == ContextRelevance.INSUFFICIENT_ACADEMIC:
-                logger.warning(f"⚠️ Context relevance check failed or deemed insufficient for academic query.")
-                logger.info("Signaling for potential web search.")
-                return NEEDS_WEB_SEARCH_MARKER
-
-            elif relevance_status == ContextRelevance.IRRELEVANT:
-                logger.warning(f"⚠️ Context relevance check failed (Irrelevant).")
-                logger.info("Signaling irrelevant context.")
-                return IRRELEVANT_CONTEXT_MARKER
-
-        prompt = self.create_prompt(query, context_chunks, query_analysis, chat_history, web_results)
+        prompt = self.create_prompt(query, context_chunks, query_analysis, chat_history)
 
         try:
+            generation_config = genai.types.GenerationConfig(
+                temperature=0.1,  # Low temperature for factual recall
+            )
+
             logger.info("📞 Calling Gemini API...")
             gemini_start_time = time.time()
             response = self.gemini.generate_content(
                 prompt,
-                generation_config=self.config.GENERATION_CONFIG,
-                safety_settings=self.config.SAFETY_SETTINGS
+                generation_config=generation_config
             )
             gemini_duration = time.time() - gemini_start_time
             logger.info(f"✅ Gemini API call successful. Duration: {gemini_duration:.4f}s")
 
+            # Handle potential safety blocks or empty responses
             if not response.parts:
                 logger.warning("⚠️ Gemini response has no parts (potentially blocked or empty).")
-                if web_results:
-                    return "The model could not generate a response based on the provided context and web research."
-                else:
-                    return "The model could not generate a response based on the provided context."
-
+                # Provide a neutral fallback consistent with instructions
+                return "The model could not generate a response based on the provided context."
+            # Assuming response.text is the primary way to get content
+            # Check if response.text exists and is not empty
             if hasattr(response, 'text') and response.text:
                 raw_answer = response.text
-                logger.debug(f"Raw answer received: {raw_answer[:200]}...")
+                logger.debug(f"Raw answer received: {raw_answer[:200]}...")  # Log beginning of raw answer
             else:
                 logger.warning("⚠️ Gemini response does not contain text or is empty.")
-                if web_results:
-                    return "The model generated an empty response based on the provided context and web research."
-                else:
-                    return "The model generated an empty response based on the provided context."
+                # Provide a neutral fallback consistent with instructions
+                return "The model generated an empty response based on the provided context."
 
             processing_start_time = time.time()
             processed_answer = post_process_answer(raw_answer)
-            logger.debug(f"Processed answer: {processed_answer[:200]}...")
+            logger.debug(f"Processed answer: {processed_answer[:200]}...")  # Log beginning of processed answer
 
-            final_answer = processed_answer
+            complexity = query_analysis.get("complexity", "simple")
+            if complexity == "complex":
+                final_answer = format_multi_part_answer(processed_answer, complexity)
+                logger.debug("Formatted answer for complex query.")
+            else:
+                final_answer = processed_answer
 
             processing_duration = time.time() - processing_start_time
             total_run_time = time.time() - run_start_time
             logger.info(f"⚙️ Answer processing finished. Duration: {processing_duration:.4f}s")
             logger.info(f"✅ Answer generated successfully. Total run time: {total_run_time:.4f}s.")
-            if total_run_time > 5.0:
-                logger.warning(f"⏱️ Total response time ({total_run_time:.4f}s) exceeded target of 5 seconds.")
+            # Note: Benchmarking target of <2s depends heavily on external API latency.
+            if total_run_time > 2.0:
+                logger.warning(f"⏱️ Total response time ({total_run_time:.4f}s) exceeded target of 2 seconds.")
             return final_answer
-
         except Exception as e:
             logger.error(f"❌ Error generating answer: {e}", exc_info=True)
+            # Provide a neutral error message
             error_message = "An error occurred while generating the response."
             return error_message
 

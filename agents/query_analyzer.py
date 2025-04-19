@@ -4,9 +4,7 @@ import faiss
 import pickle
 import numpy as np
 import itertools
-import re
-import nltk
-from nltk.corpus import stopwords
+import re # Import re
 from .base import BaseAgent
 from gemini_utils import embed_text
 from utils.text_utils import simple_keyword_score, simple_entity_score, section_relevance_score
@@ -16,36 +14,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_HYBRID_INITIAL_TOP_K = Config.RETRIEVER_INITIAL_K
 DEFAULT_HYBRID_FINAL_TOP_K = Config.RETRIEVER_FINAL_K
-
-# --- Download NLTK data if not present (optional, can be done offline) ---
-try:
-    nltk.data.find('corpora/stopwords')
-except nltk.downloader.DownloadError:
-    logger.info("Downloading NLTK stopwords...")
-    nltk.download('stopwords', quiet=True)
-try:
-    nltk.data.find('taggers/averaged_perceptron_tagger')
-except nltk.downloader.DownloadError:
-    logger.info("Downloading NLTK averaged_perceptron_tagger...")
-    nltk.download('averaged_perceptron_tagger', quiet=True)
-try:
-    nltk.data.find('tokenizers/punkt')
-except nltk.downloader.DownloadError:
-    logger.info("Downloading NLTK punkt...")
-    nltk.download('punkt', quiet=True)
-# --- End NLTK Download ---
-
-# --- Constants for Query Analysis ---
-HISTORY_KEYWORDS = {
-    "history", "historical", "past", "event", "events", "timeline", "era", "period",
-    "king", "queen", "kingdom", "empire", "dynasty", "ruler", "ancient", "medieval",
-    "colonial", "independence", "war", "battle", "treaty", "culture", "society",
-    "archaeology", "source", "primary", "secondary", "vijaya", "kandy", "anuradhapura",
-    "polonnaruwa", "sigiriya", "portuguese", "dutch", "british", "ceylon", "lanka"
-    # Add more specific terms relevant to the textbook
-}
-STOP_WORDS = set(stopwords.words('english'))
-# --- End Constants ---
 
 class RetrieverAgent(BaseAgent):
     """Agent responsible for retrieving and re-ranking relevant text chunks."""
