@@ -3,7 +3,6 @@ import logging
 import spacy
 from .base import BaseAgent
 from utils.chunk_utils import filter_redundant_chunks
-from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
