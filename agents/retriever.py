@@ -12,8 +12,21 @@ DEFAULT_TOP_K = 5
 logger = logging.getLogger(__name__)
 
 class RetrieverAgent(BaseAgent):
-    """Agent responsible for retrieving relevant text chunks using direct FAISS search."""
+    """
+    Agent responsible for retrieving relevant text chunks from a FAISS index.
+
+    Loads a pre-built FAISS index and corresponding metadata (containing the
+    original text chunks and their sources) to perform semantic search.
+    """
     def __init__(self, index_path="faiss_index.index", metadata_path="faiss_metadata.pkl"):
+        """
+        Initializes the RetrieverAgent by loading the FAISS index and metadata.
+
+        Args:
+            index_path (str): Path to the FAISS index file.
+            metadata_path (str): Path to the pickle file containing metadata
+                                 (texts and metadatas list).
+        """
         init_start_time = time.time()
         logger.info("Initializing Retriever Agent...")
         logger.info("Loading FAISS index and metadata...")
@@ -33,7 +46,22 @@ class RetrieverAgent(BaseAgent):
             self.metadatas = []
 
     def run(self, query: str, top_k: int = DEFAULT_TOP_K):
-        """Retrieves top_k chunks using direct semantic search."""
+        """
+        Retrieves the top_k most relevant text chunks for a given query.
+
+        Embeds the query, performs a search against the FAISS index, and returns
+        the corresponding text chunks and their metadata, ordered by relevance.
+
+        Args:
+            query (str): The user query to search for.
+            top_k (int): The maximum number of chunks to retrieve.
+
+        Returns:
+            list[dict]: A list of dictionaries, each containing a retrieved
+                        'text' chunk, its 'metadata', and the retrieval 'score'
+                        (distance from the query embedding). Returns an empty
+                        list if initialization failed or an error occurs.
+        """
         run_start_time = time.time()
         logger.info(f"Running direct retrieval for: '{query}' (Top K={top_k})")
 

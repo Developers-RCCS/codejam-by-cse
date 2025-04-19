@@ -1,29 +1,30 @@
 # cli_chat.py
 import logging
-from agents.orchestrator import OrchestratorAgent
-import pprint # For potentially pretty-printing debug info
+from agents.retriever import RetrieverAgent
+from agents.generator import GeneratorAgent
+import pprint
 
 # --- Logging Setup ---
-# Configure logging for the CLI application
-logging.basicConfig(level=logging.WARNING, # Set to INFO or DEBUG for more verbosity
+logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__) # Get a logger for this module
+logger = logging.getLogger(__name__)
 # --- End Logging Setup ---
 
 
 def main():
-    logger.info("Initializing chatbot...")
+    logger.info("Initializing chatbot components (Retriever, Generator)...")
     try:
-        orchestrator = OrchestratorAgent()
-        logger.info("Orchestrator Agent initialized successfully.")
+        retriever = RetrieverAgent()
+        generator = GeneratorAgent()
+        logger.info("Retriever and Generator Agents initialized successfully.")
     except Exception as e:
-        logger.critical(f"Failed to initialize OrchestratorAgent: {e}", exc_info=True)
+        logger.critical(f"Failed to initialize Agents: {e}", exc_info=True)
         print("❌ Critical Error: Could not initialize the chatbot components. Exiting.")
         return
 
-    print("--- Chatbot CLI Initialized --- Type 'exit' or 'quit' to end ---")
+    print("--- Chatbot CLI Initialized (Simple RAG) --- Type 'exit' or 'quit' to end ---")
 
-    chat_history = [] # Simple list to store conversation turns
+    chat_history = []
 
     while True:
         try:
@@ -33,41 +34,31 @@ def main():
                 break
 
             logger.info(f"CLI received query: '{query}'")
-            # Run the orchestrator
-            result = orchestrator.run(query=query, chat_history=chat_history)
-            logger.debug(f"Orchestrator result: {pprint.pformat(result)}") # Debug log for full result
 
-            # Display the result (User-facing output remains print)
+            # --- Simplified RAG Pipeline ---
+            logger.info("Step 1: Retrieving context...")
+            retrieved_chunks = retriever.run(query=query)
+            logger.info(f"Retrieved {len(retrieved_chunks)} chunks.")
+            if retrieved_chunks:
+                 log_chunks = []
+                 for i, chunk in enumerate(retrieved_chunks):
+                     meta = chunk.get('metadata', {})
+                     log_chunks.append(f"  Chunk {i+1}: p.{meta.get('page', '?')}, sec: {meta.get('section', '?')}, score: {chunk.get('score', -1):.4f}")
+                 logger.info("Retrieved Chunk Metadata:\n" + "\n".join(log_chunks))
+            else:
+                 logger.info("No chunks retrieved.")
+
+            logger.info("Step 2: Generating answer...")
+            final_answer = generator.run(query=query, context_chunks=retrieved_chunks)
+            logger.info(f"Generated answer: {final_answer[:100]}...")
+            # --- End Simplified RAG Pipeline ---
+
             print("\n🤖 Bot:")
-            print(result["answer"])
+            print(final_answer)
 
-            # Optional: Display references if not included in the answer string already
-            page_refs = result.get("references", {}).get("pages", [])
-            section_refs = result.get("references", {}).get("sections", [])
-            ref_string_parts = []
-            if page_refs:
-                 ref_string_parts.append(f"pages {', '.join(map(str, sorted(list(set(page_refs)))))}")
-            if section_refs:
-                 ref_string_parts.append(f"sections like '{', '.join(map(str, sorted(list(set(section_refs)))))}'")
-
-            if ref_string_parts and "*References:" not in result["answer"]:
-                 print(f"\n*References: [{'; '.join(ref_string_parts)}]*")
-
-
-            # Optional: Display debug info via logging
-            logger.debug("\n--- Debug Info ---")
-            logger.debug(f"Query Analysis: {result.get('query_analysis', 'N/A')}")
-            logger.debug(f"Retrieved Chunks: {len(result.get('retrieved_chunks', []))}")
-            logger.debug(f"References: {result.get('references', 'N/A')}")
-            logger.debug("------------------")
-
-
-            # Update chat history (simple version)
             chat_history.append({"role": "user", "content": query})
-            chat_history.append({"role": "assistant", "content": result["answer"]})
-            # Keep history manageable (e.g., last 10 turns = 20 messages)
+            chat_history.append({"role": "assistant", "content": final_answer})
             chat_history = chat_history[-20:]
-
 
         except EOFError:
             print("\n👋 Exiting chatbot.")
@@ -76,9 +67,8 @@ def main():
             print("\n👋 Exiting chatbot.")
             break
         except Exception as e:
-            logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+            logger.error(f"An unexpected error occurred during the chat loop: {e}", exc_info=True)
             print(f"\n❌ An unexpected error occurred: {e}")
-            # Consider adding more specific error handling or logging
 
 if __name__ == "__main__":
     main()

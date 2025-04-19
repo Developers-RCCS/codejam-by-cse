@@ -131,7 +131,7 @@ def ask():
             log_chunks = []
             for i, chunk in enumerate(retrieved_chunks):
                 meta = chunk.get('metadata', {})
-                log_chunks.append(f"  Chunk {i+1}: p.{meta.get('page', '?')}, sec: {meta.get('section', '?')}, score: {chunk.get('score', -1):.4f}")
+                log_chunks.append(f"  Chunk {i+1}: p.{meta.get('page', '?')}, sec: {meta.get('section', 'Unknown Section')}, score: {chunk.get('score', -1):.4f}")
             logger.info("Retrieved Chunk Metadata:\n" + "\n".join(log_chunks))
         else:
             logger.info("No chunks retrieved.")
