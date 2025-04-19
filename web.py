@@ -43,6 +43,24 @@ def save_chat_history(user_id, messages):
 def load_chat_history(user_id):
     return []
 
+def list_user_chats(user_id):
+    """List all chat files for a user, sorted by most recent."""
+    chat_files = []
+    for fname in os.listdir('chats'):
+        if fname.startswith(user_id + '_') and fname.endswith('.json'):
+            chat_files.append(fname)
+    # Sort by timestamp descending
+    chat_files.sort(reverse=True)
+    return chat_files
+
+def get_chat_title(chat_data, fallback):
+    """Get a title for the chat, fallback to filename if not found."""
+    # Try to get a title from the first user message
+    for msg in chat_data:
+        if msg.get('sender') == 'user' and msg.get('message'):
+            return msg['message'][:30] + ('...' if len(msg['message']) > 30 else '')
+    return fallback
+
 @app.route('/')
 def home():
     if 'user_id' not in session:
@@ -97,6 +115,64 @@ def ask():
         logger.error(f"❌ Error during /ask route processing: {e}", exc_info=True)
         logger.error(f"  Request processing time before error: {total_time:.4f}s")
         return jsonify({'error': f'An internal error occurred: {e}'}), 500
+
+@app.route('/api/chats', methods=['GET'])
+def api_list_chats():
+    if 'user_id' not in session:
+        return jsonify({'error': 'Session expired'}), 401
+    user_id = session['user_id']
+    chat_files = list_user_chats(user_id)
+    chats = []
+    for fname in chat_files:
+        path = os.path.join('chats', fname)
+        try:
+            with open(path, 'r') as f:
+                data = json.load(f)
+            title = get_chat_title(data, fname)
+        except Exception:
+            title = fname
+        chats.append({'id': fname, 'title': title})
+    return jsonify({'chats': chats})
+
+@app.route('/api/chat', methods=['POST'])
+def api_new_chat():
+    if 'user_id' not in session:
+        return jsonify({'error': 'Session expired'}), 401
+    user_id = session['user_id']
+    # Optionally accept a title, but we just create an empty chat
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    chat_id = f"{user_id}_{timestamp}.json"
+    path = os.path.join('chats', chat_id)
+    with open(path, 'w') as f:
+        json.dump([], f)
+    return jsonify({'chat_id': chat_id})
+
+@app.route('/api/chat/<chat_id>', methods=['GET'])
+def api_get_chat(chat_id):
+    if 'user_id' not in session:
+        return jsonify({'error': 'Session expired'}), 401
+    user_id = session['user_id']
+    if not chat_id.startswith(user_id + '_'):
+        return jsonify({'error': 'Unauthorized'}), 403
+    path = os.path.join('chats', chat_id)
+    if not os.path.exists(path):
+        return jsonify({'error': 'Chat not found'}), 404
+    with open(path, 'r') as f:
+        data = json.load(f)
+    return jsonify({'chat': data})
+
+@app.route('/api/chat/<chat_id>', methods=['DELETE'])
+def api_delete_chat(chat_id):
+    if 'user_id' not in session:
+        return jsonify({'error': 'Session expired'}), 401
+    user_id = session['user_id']
+    if not chat_id.startswith(user_id + '_'):
+        return jsonify({'error': 'Unauthorized'}), 403
+    path = os.path.join('chats', chat_id)
+    if not os.path.exists(path):
+        return jsonify({'error': 'Chat not found'}), 404
+    os.remove(path)
+    return jsonify({'success': True})
 
 if __name__ == '__main__':
     if orchestrator:
