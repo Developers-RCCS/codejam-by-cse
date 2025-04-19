@@ -602,11 +602,7 @@
                 <button class="new-chat-button">+ New Chat</button>
             </div>
             <ul class="chat-history-list" id="chatHistoryList">
-                <!-- Add 'active' class dynamically via JS -->
-                <li class="chat-history-item active">Example Active Chat...</li>
-                <li class="chat-history-item">Another Conversation...</li>
-                <li class="chat-history-item">History Topic Q&A...</li>
-                <!-- More items -->
+                <!-- Chat history items will be loaded here dynamically -->
             </ul>
             <!-- Add Clear History / Settings etc. here -->
         </aside>
@@ -621,7 +617,7 @@
                 <h1>Yuhasa History Tutor</h1>
                  <button class="speaker-button" id="speakerButton" title="Text-to-Speech (Not Implemented)">
                     <!-- Speaker SVG -->
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 12C15.5 13.933 13.933 15.5 12 15.5C10.067 15.5 8.5 13.933 8.5 12C8.5 10.067 10.067 8.5 12 8.5C13.933 8.5 15.5 10.067 15.5 12Z"></path><path d="M18.5 12C18.5 15.5899 15.5899 18.5 12 18.5C8.41015 18.5 5.5 15.5899 5.5 12C5.5 8.41015 8.41015 5.5 12 5.5C15.5899 5.5 18.5 8.41015 18.5 12Z"></path><path d="M21.5 12C21.5 17.2467 17.2467 21.5 12 21.5C6.75329 21.5 2.5 17.2467 2.5 12C2.5 6.75329 6.75329 2.5 12 2.5C17.2467 2.5 21.5 6.75329 21.5 12Z"></path></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 12C15.5 13.933 13.933 15.5 12 15.5C10.067 15.5 8.5 13.933 8.5 12C8.5 10.067 10.067 8.5 12 8.5C13.933 8.5 15.5 10.067 15.5 12Z"></path><path d="M18.5 12C18.5 15.5899 15.5899 18.5 12 18.5C10.067 18.5 8.5 15.5899 8.5 12C8.5 8.41015 10.067 5.5 12 5.5C15.5899 5.5 18.5 8.41015 18.5 12Z"></path><path d="M21.5 12C21.5 17.2467 17.2467 21.5 12 21.5C6.75329 21.5 2.5 17.2467 2.5 12C2.5 6.75329 6.75329 2.5 12 2.5C17.2467 2.5 21.5 6.75329 21.5 12Z"></path></svg>
                  </button>
             </header>
 
@@ -665,6 +661,10 @@
             const speakerButton = document.getElementById('speakerButton'); // Now in header
             const chatSidebar = document.getElementById('chatSidebar');
             const menuToggleButton = document.getElementById('menuToggleButton');
+            const chatHistoryList = document.getElementById('chatHistoryList');
+            const newChatButton = document.querySelector('.new-chat-button');
+
+            let currentChatId = null; // To keep track of the currently loaded chat
 
             // --- Sidebar Toggle for Mobile ---
             if (menuToggleButton) {
@@ -709,6 +709,12 @@
             }
             scrollToBottom(true); // Initial scroll without animation
 
+            // --- Clear Chat Display ---
+            function clearChatDisplay() {
+                // Remove all message elements, but keep the typing indicator
+                const messages = chatContainer.querySelectorAll('.message');
+                messages.forEach(msg => msg.remove());
+            }
 
             // --- Add Message Function ---
             function addMessageToChat(sender, message) {
@@ -735,6 +741,19 @@
                 messageWrapper.appendChild(messageBubble);
                 chatContainer.insertBefore(messageWrapper, typingIndicator);
                 scrollToBottom();
+            }
+
+            // --- Update Active Chat Item ---
+            function setActiveChatItem(chatId) {
+                const items = chatHistoryList.querySelectorAll('.chat-history-item');
+                items.forEach(item => {
+                    if (item.dataset.chatId === chatId) {
+                        item.classList.add('active');
+                    } else {
+                        item.classList.remove('active');
+                    }
+                });
+                currentChatId = chatId; // Update the current chat ID tracker
             }
 
             // --- Typing Indicator ---
@@ -780,26 +799,48 @@
                 userInput.focus();
 
                 try {
-                    // Simplified history collection for context (adjust as needed)
-                    const currentMessages = Array.from(chatContainer.querySelectorAll('.message')).slice(-10).map(msgDiv => { // Send last 10 messages
-                        const isUser = msgDiv.classList.contains('user-message');
-                        const bubble = msgDiv.querySelector('.message-bubble');
-                        let textContent = bubble.textContent || ""; // Get text content
-                        return {
-                            sender: isUser ? 'user' : 'bot',
-                            message: textContent.trim()
-                        };
-                    }).filter(msg => msg.message);
+                    // Determine chat history to send
+                    let historyToSend = [];
+                    if (currentChatId) {
+                        // If loading a past chat, maybe fetch its *full* history?
+                        // For simplicity now, just send recent *displayed* messages like before.
+                        historyToSend = Array.from(chatContainer.querySelectorAll('.message')).slice(-10).map(msgDiv => {
+                            const isUser = msgDiv.classList.contains('user-message');
+                            const bubble = msgDiv.querySelector('.message-bubble');
+                            let textContent = bubble.textContent || "";
+                            return {
+                                role: isUser ? 'user' : 'assistant', // Match backend expectation if needed
+                                content: textContent.trim()
+                            };
+                        }).filter(msg => msg.content);
+                    } else {
+                         // New chat, send only the current interaction history
+                         historyToSend = Array.from(chatContainer.querySelectorAll('.message')).slice(-10).map(msgDiv => {
+                            const isUser = msgDiv.classList.contains('user-message');
+                            const bubble = msgDiv.querySelector('.message-bubble');
+                            let textContent = bubble.textContent || "";
+                            return {
+                                role: isUser ? 'user' : 'assistant',
+                                content: textContent.trim()
+                            };
+                        }).filter(msg => msg.content);
+                    }
+
+                    // **TODO**: If currentChatId is set, the backend should ideally associate
+                    // this new message with that specific chat history for saving.
+                    // This might require sending the currentChatId in the request.
+                    const requestBody = {
+                        query: message,
+                        chat_history: historyToSend
+                        // Optionally add: chatId: currentChatId
+                    };
 
                     const response = await fetch('/ask', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                         },
-                        body: JSON.stringify({
-                            query: message,
-                            chat_history: currentMessages
-                        })
+                        body: JSON.stringify(requestBody)
                     });
 
                     if (!response.ok) {
@@ -893,6 +934,89 @@
             }
             // --- End Speech Recognition ---
 
+            // --- Load Specific Chat History ---
+            async function loadChat(chatId) {
+                if (chatId === currentChatId) return; // Don't reload if already active
+
+                console.log(`Loading chat: ${chatId}`);
+                showTypingIndicator(); // Show loading state
+                try {
+                    // ** SIMULATED API CALL **
+                    // Replace with actual fetch call: e.g., await fetch(`/api/chat/${chatId}`)
+                    const simulatedHistory = {
+                        "chat1": [
+                            { sender: "user", message: "Tell me about the industrial revolution." },
+                            { sender: "bot", message: "The Industrial Revolution was a period of major technological, socioeconomic, and cultural change..." }
+                        ],
+                        "chat2": [
+                            { sender: "user", message: "Who was Napoleon Bonaparte?" },
+                            { sender: "bot", message: "Napoleon Bonaparte was a French military and political leader..." },
+                            { sender: "user", message: "When did he live?" },
+                            { sender: "bot", message: "He lived from 1769 to 1821." }
+                        ]
+                    };
+                    // const response = await fetch(`/api/chat/${chatId}`); // Real call
+                    // if (!response.ok) throw new Error(`Failed to load chat ${chatId}`);
+                    // const chatHistory = await response.json();
+                    const chatHistory = simulatedHistory[chatId] || []; // Use simulated data
+
+                    clearChatDisplay();
+                    chatHistory.forEach(msg => {
+                        // Adjust sender if needed based on backend format (e.g., role vs sender)
+                        addMessageToChat(msg.sender === 'user' ? 'user' : 'bot', msg.message);
+                    });
+                    setActiveChatItem(chatId);
+                    scrollToBottom(true); // Scroll instantly after loading
+
+                } catch (error) {
+                    console.error('Error loading chat:', error);
+                    addMessageToChat('bot', `😥 Sorry, I couldn't load chat ${chatId}.`);
+                } finally {
+                    hideTypingIndicator();
+                }
+            }
+
+            // --- Load Chat History List from Server ---
+            async function loadChatHistoryList() {
+                try {
+                    // ** SIMULATED API CALL **
+                    // Replace with actual fetch: e.g., await fetch('/api/chats')
+                    const simulatedChats = [
+                        { id: "chat1", name: "Industrial Revolution Q&A" },
+                        { id: "chat2", name: "Napoleon Bonaparte Facts" }
+                    ];
+                    // const response = await fetch('/api/chats'); // Real call
+                    // if (!response.ok) throw new Error('Failed to load chat list');
+                    // const chats = await response.json();
+                    const chats = simulatedChats; // Use simulated data
+
+                    chatHistoryList.innerHTML = ''; // Clear existing list
+                    chats.forEach(chat => {
+                        const li = document.createElement('li');
+                        li.classList.add('chat-history-item');
+                        li.textContent = chat.name; // Use a display name
+                        li.dataset.chatId = chat.id;
+                        li.setAttribute('role', 'button');
+                        li.tabIndex = 0; // Make it focusable
+
+                        li.addEventListener('click', () => loadChat(chat.id));
+                        li.addEventListener('keypress', (e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                                loadChat(chat.id);
+                            }
+                        });
+                        chatHistoryList.appendChild(li);
+                    });
+
+                    // Optionally, mark the initially loaded chat as active if applicable
+                    // setActiveChatItem(initialChatId); // Need initialChatId from backend
+
+                } catch (error) {
+                    console.error('Error loading chat history list:', error);
+                    // Optionally display an error in the sidebar
+                }
+            }
+
             // --- Event Listeners ---
             sendButton.addEventListener('click', sendMessage);
             userInput.addEventListener('keypress', function (e) {
@@ -910,7 +1034,16 @@
                 alert('Text-to-speech functionality is not yet implemented.');
             });
 
+            newChatButton.addEventListener('click', () => {
+                clearChatDisplay();
+                setActiveChatItem(null); // Deactivate sidebar items
+                addMessageToChat('bot', 'Hi! Ask me anything about Grade 11 History.'); // Reset to initial message
+                userInput.focus();
+                // Potentially notify backend to start a new chat session/ID
+            });
+
             // --- Initial Setup ---
+            loadChatHistoryList(); // Load the list of chats on page load
             userInput.focus();
             autoResizeTextarea();
         });
