@@ -809,7 +809,7 @@
                             const bubble = msgDiv.querySelector('.message-bubble');
                             let textContent = bubble.textContent || "";
                             return {
-                                role: isUser ? 'user' : 'assistant', // Match backend expectation if needed
+                                sender: isUser ? 'user' : 'assistant', // Changed 'role' to 'sender'
                                 content: textContent.trim()
                             };
                         }).filter(msg => msg.content);
@@ -820,7 +820,7 @@
                             const bubble = msgDiv.querySelector('.message-bubble');
                             let textContent = bubble.textContent || "";
                             return {
-                                role: isUser ? 'user' : 'assistant',
+                                sender: isUser ? 'user' : 'assistant', // Changed 'role' to 'sender'
                                 content: textContent.trim()
                             };
                         }).filter(msg => msg.content);

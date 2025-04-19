@@ -8,6 +8,7 @@ from .base import BaseAgent
 from gemini_utils import setup_gemini
 from utils.messages import get_random_message, NOT_FOUND_MESSAGES, CLOSING_REMARKS, PLAYFUL_FOLLOWUPS
 from utils.text_utils import post_process_answer, format_multi_part_answer
+from config import Config  # Import the Config class
 
 logger = logging.getLogger(__name__)  # Get a logger for this module
 
@@ -27,6 +28,7 @@ class GeneratorAgent(BaseAgent):
     """Agent responsible for generating answers using Gemini."""
     def __init__(self):
         logger.info("✨ Initializing Gemini model...")
+        self.config = Config()  # Initialize config
         try:
             self.gemini = setup_gemini()
             logger.info("✅ Gemini model initialized successfully.")
@@ -69,15 +71,24 @@ class GeneratorAgent(BaseAgent):
             formatted_context += "\n"
 
         # 🧠 Construct real-time dialogue memory (from web.py's reasoning_agent)
-        conversation = ""
+        history_str = ""
         if chat_history:
-            trimmed = chat_history[-10:]  # Keep last 5 turns (10 messages)
-            for msg in trimmed:
-                role = "Student" if msg["sender"] == "user" else "Yuhasa"
-                conversation += f"{role}: {msg['message']}\n"
-        if not conversation:
-            conversation = "(No recent conversation history)"
-        # --- End dialogue memory ---
+            history_str += "\n\n## Conversation History:\n"
+            # Limit history length for context window
+            limited_history = chat_history[-self.config.MAX_HISTORY_MESSAGES:]
+            for msg in limited_history:  # Iterate over the history from the request
+                # Use .get() for safety, although frontend should now send 'sender' and 'content'
+                sender = msg.get("sender")
+                content = msg.get("content", "")  # Use 'content' key
+
+                if sender and content:  # Only process if both sender and content exist and are not empty
+                    role = "Student" if sender == "user" else "Yuhasa"
+                    history_str += f"{role}: {content}\n"
+                else:
+                    # Log a warning if a message is skipped due to missing keys/content
+                    logger.warning(f"Skipping potentially malformed chat history message: {msg}")
+
+        # Prepare context string
 
         # Get query type and complexity
         query_type = query_analysis.get("query_type", "unknown")
@@ -85,7 +96,7 @@ class GeneratorAgent(BaseAgent):
 
         # Base prompt structure - Incorporating history
         base_prompt = f"""**Recent Conversation:**
-{conversation}
+{history_str}
 **Context Information:**
 {formatted_context}
 
