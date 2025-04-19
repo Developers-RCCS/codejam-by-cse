@@ -1,6 +1,6 @@
 # Yuhasa - History Tutor Chatbot
 
-This project implements a Retrieval-Augmented Generation (RAG) chatbot focused on answering questions about a Grade 11 History textbook. It uses Google's Gemini AI for language understanding and generation, and FAISS for efficient information retrieval from the textbook content.
+This project implements a Retrieval-Augmented Generation (RAG) chatbot focused on answering questions about a Grade 11 History textbook. It uses Google's Gemini AI for language understanding and generation, and FAISS for efficient information retrieval from the textbook content. The project intentionally uses minimal dependencies (Flask, FAISS, Gemini, PyPDF) for simplicity, speed, and maintainability.
 
 ## Prerequisites
 
@@ -28,7 +28,7 @@ This project implements a Retrieval-Augmented Generation (RAG) chatbot focused o
 
     pip install -r requirements.txt
     ```
-    *(Note: A `requirements.txt` file might need to be created if it doesn't exist. Based on the project files, likely dependencies include: `flask`, `google-generativeai`, `faiss-cpu` or `faiss-gpu`, `langchain` (potentially), `pypdf`, `python-dotenv`, `numpy`, `spacy`)*
+    *(Note: The `requirements.txt` file lists the necessary dependencies: `flask`, `google-generativeai`, `faiss-cpu`, `pypdf`, `python-dotenv`, `numpy`)*
 
 3.  **Configure API Key:**
     *   Create a file named `.env` in the root project directory.
@@ -76,3 +76,6 @@ There seem to be multiple ways to interact with the chatbot:
 *   `chats/`: Stores conversation history (JSON files).
 *   `grade-11-history-text-book.pdf`: The source document.
 *   `faiss_index.index`, `faiss_metadata.pkl`: The generated vector store files.
+*   `requirements.txt`: Lists the project dependencies.
+*   `README.md`: This file.
+*   `PROJECT_EXPLANATION.md`: Detailed explanation of the project architecture.
