@@ -274,7 +274,4 @@ class RetrieverAgent(BaseAgent):
              return []
 
         expansion_time = time.time() - expansion_start_time
-        logger.info(f"Step 2a: Query expansion & embedding took: {expansion_time:.4f}s") # Corrected this line
-
-        faiss_start_time = time.time()
-        # ...existing code...
+        logger.info(f"Step 2a: Query expansion
