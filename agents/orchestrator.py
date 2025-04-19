@@ -1,6 +1,7 @@
 # agents/orchestrator.py
 import logging
 import time
+import random  # Import random for selecting responses
 from .base import BaseAgent
 from .query_analyzer import QueryAnalyzerAgent
 from .retriever import RetrieverAgent
@@ -9,6 +10,46 @@ from .reference_tracker import ReferenceTrackerAgent
 from .context_expander import ContextExpansionAgent
 
 logger = logging.getLogger(__name__)
+
+# --- Greeting/General Chat Handling ---
+COMMON_GREETINGS = {
+    "hi", "hello", "hey", "greetings", "good morning", "good afternoon", "good evening", "yo", "sup"
+}
+GENERAL_CHAT = {
+    "thanks", "thank you", "ok", "okay", "cool", "awesome", "great", "bye", "goodbye", "see you", "how are you", "how's it going", "what's up"
+}
+FRIENDLY_RESPONSES = [
+    "Hi there! 😊 How can I help you explore Sri Lankan history today?",
+    "Hello! Ready to dive into some history? Ask me anything about the textbook.",
+    "Hey! What aspect of Sri Lankan history are you interested in learning about?",
+    "Greetings! I'm here to help with your questions about the Grade 11 history text.",
+    "Thanks for stopping by! What historical topic is on your mind?",
+    "You're welcome! Anything else I can help you find in the history text?",
+    "Okay! Let me know your next question about Sri Lankan history.",
+    "Glad I could help! Feel free to ask more questions.",
+    "Goodbye! Come back anytime to learn more history.",
+    "See you later! Happy studying!",
+    "I'm doing well, thank you! Ready to assist with your history questions. What would you like to know?",
+]
+ACKNOWLEDGEMENT_RESPONSES = [
+    "You're welcome!",
+    "No problem!",
+    "Glad I could help!",
+    "Anytime!",
+]
+FAREWELL_RESPONSES = [
+    "Goodbye!",
+    "See you later!",
+    "Take care!",
+    "Happy studying!",
+]
+HOW_ARE_YOU_RESPONSES = [
+    "I'm doing well, thank you for asking! I'm ready to help you with Sri Lankan history. What's your question?",
+    "I'm an AI, so I don't have feelings, but I'm fully operational and ready to assist you with history!",
+    "Functioning optimally! How can I help you with the history textbook today?",
+]
+# --- End Greeting/General Chat Handling ---
+
 
 class OrchestratorAgent(BaseAgent):
     """Agent responsible for orchestrating the QA workflow."""
@@ -22,7 +63,7 @@ class OrchestratorAgent(BaseAgent):
         logger.info("✅ Orchestrator ready.")
 
     def run(self, query: str, chat_history: list = None) -> dict:
-        """Runs the full QA pipeline with query analysis, retrieval, context expansion, and generation.
+        """Runs the full QA pipeline or handles greetings/general chat.
 
         Args:
             query: The user's input query.
@@ -34,6 +75,30 @@ class OrchestratorAgent(BaseAgent):
         """
         orchestration_start_time = time.time()
         logger.info(f"\n🔄 Orchestrating response for query: '{query}'")
+
+        # --- Check for Greetings/General Chat ---
+        normalized_query = query.lower().strip().rstrip('?.!')
+        if normalized_query in COMMON_GREETINGS:
+            response = random.choice([r for r in FRIENDLY_RESPONSES if "Hi" in r or "Hello" in r or "Hey" in r or "Greetings" in r])
+            logger.info(f"💬 Detected greeting. Responding: '{response}'")
+            return {"answer": response, "references": [], "query_analysis": {"type": "greeting"}, "retrieved_chunks": []}
+        elif normalized_query in {"thanks", "thank you"}:
+            response = random.choice(ACKNOWLEDGEMENT_RESPONSES)
+            logger.info(f"💬 Detected thanks. Responding: '{response}'")
+            return {"answer": response, "references": [], "query_analysis": {"type": "acknowledgement"}, "retrieved_chunks": []}
+        elif normalized_query in {"bye", "goodbye", "see you"}:
+            response = random.choice(FAREWELL_RESPONSES)
+            logger.info(f"💬 Detected farewell. Responding: '{response}'")
+            return {"answer": response, "references": [], "query_analysis": {"type": "farewell"}, "retrieved_chunks": []}
+        elif normalized_query in {"how are you", "how's it going", "what's up"}:
+            response = random.choice(HOW_ARE_YOU_RESPONSES)
+            logger.info(f"💬 Detected 'how are you'. Responding: '{response}'")
+            return {"answer": response, "references": [], "query_analysis": {"type": "status_inquiry"}, "retrieved_chunks": []}
+        elif normalized_query in GENERAL_CHAT:  # Catch other general phrases
+            response = random.choice([r for r in FRIENDLY_RESPONSES if "Okay" in r or "Glad" in r])  # Generic positive response
+            logger.info(f"💬 Detected general chat. Responding: '{response}'")
+            return {"answer": response, "references": [], "query_analysis": {"type": "general_chat"}, "retrieved_chunks": []}
+        # --- End Check ---
 
         # 1. Analyze Query
         analysis_start_time = time.time()
@@ -92,7 +157,7 @@ class OrchestratorAgent(BaseAgent):
         orchestration_duration = time.time() - orchestration_start_time
         logger.info(f"✅ Orchestration complete. Total time: {orchestration_duration:.4f}s")
         if orchestration_duration > 3.0:
-             logger.warning(f"⏱️ Total orchestration time ({orchestration_duration:.4f}s) exceeded target threshold of 3 seconds.")
+            logger.warning(f"⏱️ Total orchestration time ({orchestration_duration:.4f}s) exceeded target threshold of 3 seconds.")
 
         return {
             "answer": final_answer,
