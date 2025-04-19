@@ -103,7 +103,7 @@ class OrchestratorAgent(BaseAgent):
         # 1. Analyze Query
         analysis_start_time = time.time()
         logger.info("Step 1: Analyzing query...")
-        query_analysis = self.query_analyzer.run(query=query)
+        query_analysis = self.query_analyzer.run(query=query, chat_history=chat_history)  # Pass chat_history
         refined_query = query_analysis.get("refined_query", query)
         analysis_duration = time.time() - analysis_start_time
         logger.info(f"Step 1: Query analysis complete ({analysis_duration:.4f}s). Result: {query_analysis}")

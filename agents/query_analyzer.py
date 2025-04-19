@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__) # Get a logger for this module
 
 class QueryAnalyzerAgent(BaseAgent):
     """Agent responsible for analyzing the user query."""
-    def run(self, query: str) -> dict:
+    def run(self, query: str, chat_history: list = None) -> dict: # Add chat_history parameter
         start_time = time.time()
-        logger.debug(f"Analyzing query: '{query}'")
+        logger.debug(f"Analyzing query: '{query}' with history: {chat_history is not None}") # Log if history is present
         if not nlp:
             logger.warning("spaCy model not loaded, falling back to basic analysis.")
             # Fallback basic extraction (similar to previous web.py logic)
@@ -29,7 +29,8 @@ class QueryAnalyzerAgent(BaseAgent):
             keywords = list(set([k.strip().lower() for k in keywords if k]))
             entities = list(set([e.strip() for e in entities if len(e.split()) > 1 or e in keywords]))
         else:
-            # Use spaCy for extraction
+            # TODO: Incorporate chat_history into spaCy analysis if needed
+            # For now, just process the current query
             doc = nlp(query)
             
             # Extract Named Entities (GPE, PERSON, ORG, LOC, EVENT, DATE etc.)
@@ -60,7 +61,9 @@ class QueryAnalyzerAgent(BaseAgent):
             "original_query": query, # Add the original query here
             "keywords": keywords,
             "entities": entities,
-            "query_type": query_type
+            "query_type": query_type,
+            # Optionally include history info if used
+            # "history_considered": chat_history is not None 
         }
         
         end_time = time.time()
