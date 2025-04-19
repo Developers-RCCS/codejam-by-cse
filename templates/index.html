@@ -997,9 +997,9 @@
                 alert('Attachment functionality is not yet implemented.');
             });
 
-            speakerButton.addEventListener('click', () => {
-                alert('Text-to-speech functionality is not yet implemented.');
-            });
+            // speakerButton.addEventListener('click', () => {
+            //     alert('Text-to-speech functionality is not yet implemented.');
+            // });
 
             // --- Initial Setup ---
             loadChatHistoryList(true); // Load the list of chats and select latest on page load
@@ -1007,6 +1007,42 @@
             autoResizeTextarea();
         });
     </script>
+
+<script>
+    document.getElementById('speakerButton').addEventListener('click', async function() {
+        // Find all bot messages in the chat
+        const botMessages = Array.from(document.querySelectorAll('.bot-message .message-bubble'));
+        if (botMessages.length === 0) {
+            alert('No bot message to speak!');
+            return;
+        }
+        // Get the last bot message's text
+        const lastBotMsg = botMessages[botMessages.length - 1].innerText.trim();
+        if (!lastBotMsg) {
+            alert('Bot message is empty!');
+            return;
+        }
+        try {
+            // Send the text to the /tts endpoint
+            const response = await fetch('/tts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: lastBotMsg })
+            });
+            if (!response.ok) {
+                throw new Error('TTS failed');
+            }
+            const blob = await response.blob();
+            // Play the audio using an Audio element
+            const audioUrl = URL.createObjectURL(blob);
+            const audio = new Audio(audioUrl);
+            audio.play();
+        } catch (err) {
+            alert('Failed to speak: ' + err.message);
+        }
+    });
+    </script>
+    
 </body>
 
 </html>

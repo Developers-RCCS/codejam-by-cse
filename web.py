@@ -6,6 +6,9 @@ import json
 import time
 from agents.orchestrator import OrchestratorAgent
 import traceback
+from gtts import gTTS
+from flask import send_file
+import io
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO,
@@ -173,6 +176,24 @@ def api_delete_chat(chat_id):
         return jsonify({'error': 'Chat not found'}), 404
     os.remove(path)
     return jsonify({'success': True})
+
+@app.route('/tts', methods=['POST'])
+def text_to_speech():
+    data = request.get_json()
+    text = data.get('text', '')
+    if not text:
+        return jsonify({'error': 'No text provided'}), 400
+    try:
+        # Generate speech using gTTS
+        tts = gTTS(text=text, lang='en')
+        mp3_fp = io.BytesIO()
+        tts.write_to_fp(mp3_fp)
+        mp3_fp.seek(0)
+        # Return the audio file as response
+        return send_file(mp3_fp, mimetype='audio/mpeg', as_attachment=False, download_name='speech.mp3')
+    except Exception as e:
+        logger.error(f"Error generating speech: {e}", exc_info=True)
+        return jsonify({'error': 'Failed to generate speech'}), 500
 
 if __name__ == '__main__':
     if orchestrator:
