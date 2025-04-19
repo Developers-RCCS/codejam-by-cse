@@ -14,9 +14,6 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_HYBRID_INITIAL_TOP_K = Config.RETRIEVER_INITIAL_K
-DEFAULT_HYBRID_FINAL_TOP_K = Config.RETRIEVER_FINAL_K
-
 # --- Download NLTK data if not present (optional, can be done offline) ---
 try:
     nltk.data.find('corpora/stopwords')
@@ -249,7 +246,7 @@ class RetrieverAgent(BaseAgent):
         return unique_expansions[:max_expansions]
 
 
-    def run(self, query: str, query_analysis: dict, initial_top_k: int = DEFAULT_HYBRID_INITIAL_TOP_K, final_top_k: int = 5):
+    def run(self, query: str, query_analysis: dict, initial_top_k: int = 25, final_top_k: int = 5):
         """Retrieves chunks using semantic search (with expansion), filters and re-ranks them."""
         run_start_time = time.time()
         logger.info(f"🔎 Running hybrid retrieval for: '{query}' (Initial K={initial_top_k}, Final K={final_top_k})")
