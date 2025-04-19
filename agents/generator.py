@@ -7,6 +7,8 @@ from .base import BaseAgent
 from gemini_utils import setup_gemini
 from utils.text_utils import post_process_answer, format_multi_part_answer
 from config import Config
+import spacy
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,17 @@ class GeneratorAgent(BaseAgent):
         except Exception as e:
             logger.error(f"Failed to initialize Gemini model: {e}", exc_info=True)
             self.gemini = None
+
+        # Load spaCy model for NER and dependency parsing
+        try:
+            self.nlp = spacy.load("en_core_web_sm")
+            logger.info("✅ spaCy model 'en_core_web_sm' loaded successfully.")
+        except OSError:
+            logger.error("❌ Error loading spaCy model 'en_core_web_sm'. Please run: python -m spacy download en_core_web_sm")
+            self.nlp = None
+
+        # Initialize feedback storage
+        self.feedback = defaultdict(list)
 
     def _check_context_relevance(self, context_chunks: list[dict], query_analysis: dict) -> bool:
         """Check if any context chunk contains keywords or entities from the query.
@@ -70,6 +83,49 @@ class GeneratorAgent(BaseAgent):
             logger.warning("No relevant terms found in any context chunk.")
 
         return found_relevant_chunk
+
+    def _enhanced_check_context_relevance(self, context_chunks: list[dict], query_analysis: dict) -> bool:
+        """Enhanced check for context relevance using NER and dependency parsing."""
+        if not self.nlp:
+            logger.warning("spaCy model not loaded, falling back to basic relevance check.")
+            return self._check_context_relevance(context_chunks, query_analysis)
+
+        keywords = query_analysis.get("keywords", [])
+        entities = query_analysis.get("entities", [])
+        search_terms = set([k.lower() for k in keywords] + [e.lower() for e in entities])
+        logger.debug(f"Enhanced checking context relevance. Search terms: {search_terms}")
+
+        if not search_terms:
+            logger.debug("No keywords/entities found in query analysis, assuming context is relevant.")
+            return True  # If no terms to check, assume relevance or let LLM decide
+
+        found_relevant_chunk = False
+        for i, chunk in enumerate(context_chunks):
+            text_lower = chunk.get("text", "").lower()
+            doc = self.nlp(text_lower)
+            chunk_entities = [ent.text.lower() for ent in doc.ents]
+            chunk_keywords = [token.text.lower() for token in doc if token.dep_ in ("nsubj", "dobj", "pobj")]
+
+            for term in search_terms:
+                if term in chunk_entities or term in chunk_keywords:
+                    logger.debug(f"Found relevant term '{term}' in context chunk {i+1} using NER/Dependency Parsing.")
+                    found_relevant_chunk = True
+                    break  # Found a relevant term in this chunk, move to next chunk if needed (though one is enough)
+            if found_relevant_chunk:
+                break  # Found a relevant chunk, no need to check further
+
+        if not found_relevant_chunk:
+            logger.warning("No relevant terms found in any context chunk using NER/Dependency Parsing.")
+
+        return found_relevant_chunk
+
+    def _update_feedback(self, query: str, context_chunks: list[dict], relevance: bool):
+        """Update feedback loop with user interaction data."""
+        self.feedback[query].append({
+            "context_chunks": context_chunks,
+            "relevance": relevance
+        })
+        logger.debug(f"Feedback updated for query: '{query}' with relevance: {relevance}")
 
     def create_prompt(self, query: str, context_chunks: list[dict], query_analysis: dict, chat_history: list = None) -> str:
         """Create an effective prompt based on query type, context, and history."""
@@ -171,7 +227,8 @@ You are a factual history tutor bot. Your goal is to provide direct, detailed, a
             logger.info(f"Fallback triggered: No context. Time: {time.time() - run_start_time:.4f}s")
             return fallback_message
 
-        is_relevant = self._check_context_relevance(context_chunks, query_analysis)
+        is_relevant = self._enhanced_check_context_relevance(context_chunks, query_analysis)
+        self._update_feedback(query, context_chunks, is_relevant)
         if not is_relevant:
             logger.warning(f"⚠️ Context relevance check failed. Keywords/Entities: {query_analysis.get('keywords', []) + query_analysis.get('entities', [])}")
             # Adhering to strict non-apology rule
