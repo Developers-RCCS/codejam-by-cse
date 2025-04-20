@@ -1,4 +1,5 @@
 langchain
+langchain-google-genai
 pymupdf
 sentence-transformers
 faiss-cpu
