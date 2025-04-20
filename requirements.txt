@@ -1,0 +1,7 @@
+langchain
+pymupdf
+sentence-transformers
+faiss-cpu
+google-generativeai
+python-dotenv
+# Add other core dependencies as needed later
