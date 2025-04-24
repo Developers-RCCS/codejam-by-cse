@@ -25,7 +25,7 @@ def search_chunks(query, top_k=5):
 def generate_answer(query, chunks):
     context = "\n\n".join([f"(Page {c['page']}) {c['text']}" for c in chunks])
     prompt = f"""
-You are Yuhasa, a female-minded helpful AI tutor helping a student understand history.
+You are Histronaut, a helpful AI tutor helping a student understand history.
 Use the following textbook excerpts to answer the question.
 
 Textbook Context:
@@ -35,6 +35,7 @@ Question:
 {query}
 
 Answer:"""
+    
     response = gemini.generate_content(prompt)
     return response.text.strip(), [c["page"] for c in chunks]
 
