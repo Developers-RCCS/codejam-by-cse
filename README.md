@@ -64,5 +64,4 @@ There seem to be multiple ways to interact with the chatbot:
     *   Interact with the bot directly in your terminal. Type 'exit' or 'quit' to end the session.
 
 ## Project Overview
-
-    [[Read the Project Overview](https://github.com/Developers-RCCS/codejam-by-cse/blob/main/PROJECT_EXPLANATION.md)]
+[Read the Project Overview](https://github.com/Developers-RCCS/codejam-by-cse/blob/main/PROJECT_EXPLANATION.md)
