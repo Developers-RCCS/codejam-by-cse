@@ -6,6 +6,7 @@ from .generator import GeneratorAgent
 from .reference_tracker import ReferenceTrackerAgent
 from .context_expander import ContextExpansionAgent
 from .web_search_agent import WebSearchAgent
+from .conversation_memory import ConversationMemoryAgent
 import time
 import numpy as np
 from gemini_utils import embed_text
@@ -639,7 +640,82 @@ class OrchestratorAgent(BaseAgent):
         self.context_expander = ContextExpansionAgent()
         self.web_search_agent = WebSearchAgent(cache_dir="web_cache")
         self.conflict_detector = SourceConflictDetector()
+        # Add conversation memory agent
+        self.conversation_memory = ConversationMemoryAgent()
         print("✅ Orchestrator ready.")
+    
+    def _is_conversational_query(self, query: str) -> bool:
+        """
+        Determine if a query is conversational rather than information-seeking.
+        
+        Args:
+            query: The user's query
+            
+        Returns:
+            bool: True if the query seems conversational
+        """
+        conversational_patterns = [
+            r"\bhello\b", r"\bhi\b", r"\bhey\b", r"\bthanks\b", r"\bthank you\b", 
+            r"\bhow are you\b", r"\bnice to meet\b", r"\bbye\b", r"\bsee you\b",
+            r"\bgood morning\b", r"\bgood afternoon\b", r"\bgood evening\b",
+            r"\bgood night\b", r"\bwhat's up\b", r"\bwhat about you\b"
+        ]
+        
+        # Check for greetings and conversational phrases
+        query_lower = query.lower()
+        for pattern in conversational_patterns:
+            if re.search(pattern, query_lower):
+                return True
+                
+        # Check if very short (likely a greeting or acknowledgment)
+        if len(query_lower.split()) <= 2:
+            return True
+            
+        return False
+    
+    def _get_conversational_response(self, query: str, conversation_context: dict) -> str:
+        """
+        Generate a purely conversational response without information retrieval.
+        
+        Args:
+            query: User query
+            conversation_context: Current conversation context
+            
+        Returns:
+            str: Conversational response
+        """
+        # Simple response templates for common conversational queries
+        greetings = {
+            "hello": ["Hi there! I'm Yuhasa, your history tutor. What historical topic are you interested in exploring today?",
+                     "Hello! I'm excited to help you learn about history today. What would you like to discuss?"],
+            "hi": ["Hi! I'm Yuhasa, your friendly history tutor. What historical period or event would you like to learn about?",
+                  "Hello there! Ready to explore some fascinating history together? What topic interests you?"],
+            "hey": ["Hey! I'm Yuhasa. I'm here to make learning history fun and engaging. What shall we explore today?",
+                   "Hey there! What aspect of history are you curious about today?"],
+            "thank": ["You're very welcome! I'm glad I could help. Is there anything else about history you'd like to explore?",
+                     "It's my pleasure! I really enjoy discussing history. What else would you like to know about?"],
+            "bye": ["Goodbye! Feel free to come back anytime you have history questions. Have a great day!",
+                   "See you later! I'm always here to help with your history studies. Take care!"],
+            "good morning": ["Good morning! A perfect time to explore some fascinating historical events. What would you like to learn today?"],
+            "good afternoon": ["Good afternoon! Ready for some historical exploration? What topic shall we dive into?"],
+            "good evening": ["Good evening! There's always time for a bit of history. What would you like to discuss?"]
+        }
+        
+        # Check for matching patterns
+        query_lower = query.lower()
+        
+        for key, responses in greetings.items():
+            if key in query_lower:
+                return responses[0] if not responses else random.choice(responses)
+                
+        # Default conversational response
+        state = conversation_context.get("conversation_state", "greeting")
+        rapport = conversation_context.get("rapport_level", 0)
+        
+        if state == "greeting" or rapport < 3:
+            return "I'm Yuhasa, your history tutor. I specialize in Grade 11 history content. What historical topic would you like to explore today?"
+        else:
+            return "I'm here to help with any history questions you have. What aspect of history shall we explore next?"
 
     def _should_use_web_search(self, query_analysis: dict, retrieved_chunks: list) -> bool:
         """
@@ -836,9 +912,38 @@ class OrchestratorAgent(BaseAgent):
         
         return result
 
-    def run(self, query: str, chat_history: list = None) -> dict:
-        """Runs the full QA pipeline with enhanced query handling, retrieval, and context expansion."""
+    def run(self, query: str, chat_history: list = None, session_id: str = None) -> dict:
+        """Runs the full QA pipeline with enhanced query handling, retrieval, context expansion, and personalization."""
         print(f"\n🔄 Orchestrating response for query: '{query}'")
+
+        # Initialize or get existing session with conversation memory
+        if not session_id or not self.conversation_memory.current_session_id:
+            session_id = self.conversation_memory.start_new_session(session_id)
+            print(f"📝 Started new conversation session: {session_id}")
+        elif session_id != self.conversation_memory.current_session_id:
+            self.conversation_memory.start_new_session(session_id)
+            print(f"📝 Switched to conversation session: {session_id}")
+            
+        # Add user message to conversation memory
+        self.conversation_memory.add_message("user", query)
+            
+        # Get conversation context for personalization
+        conversation_context = self.conversation_memory.generate_personalized_context()
+        
+        # Check if this is a conversational query rather than information-seeking
+        if self._is_conversational_query(query):
+            print("💬 Detected conversational query, generating social response")
+            response = self._get_conversational_response(query, conversation_context)
+            
+            # Add response to conversation memory
+            self.conversation_memory.add_message("bot", response)
+            
+            return {
+                "answer": response,
+                "references": {},
+                "query_analysis": {"query_type": "conversational", "original_query": query},
+                "retrieved_chunks": []
+            }
 
         # 1. Analyze Query
         query_analysis = self.query_analyzer.run(query=query)
@@ -879,21 +984,38 @@ class OrchestratorAgent(BaseAgent):
             retriever_agent=self.retriever
         )
 
+        # Add chat history to conversation context for continuity
+        conversation_context["chat_history"] = self.conversation_memory.get_chat_history(3)
+
         if not final_context_chunks:
             print("⚠️ No relevant context found after retrieval/expansion.")
+            friendly_no_info_response = "I don't have specific information about that in my sources. Could you try asking about a different aspect of history, or rephrase your question? I'd be happy to help with topics related to Grade 11 history."
+            
+            # Add response to conversation memory
+            self.conversation_memory.add_message("bot", friendly_no_info_response)
+            
             return {
-                "answer": "I couldn't find relevant information to answer that question.",
+                "answer": friendly_no_info_response,
                 "references": {"pages": [], "sections": [], "web_sources": []},
                 "query_analysis": query_analysis,
                 "retrieved_chunks": []
             }
 
-        # 6. Generate Answer with query-type-aware prompting
-        answer = self.generator.run(
+        # 6. Generate Answer with query-type-aware prompting and personalization
+        generation_result = self.generator.run(
             query=query_analysis["original_query"], 
             context_chunks=final_context_chunks,
-            query_analysis=query_analysis
+            query_analysis=query_analysis,
+            conversation_context=conversation_context
         )
+        
+        # Extract answer and explained concepts
+        answer = generation_result["answer"] if isinstance(generation_result, dict) else generation_result
+        explained_concepts = generation_result.get("explained_concepts", []) if isinstance(generation_result, dict) else []
+        
+        # Record explained concepts in conversation memory
+        for concept in explained_concepts:
+            self.conversation_memory.record_explained_concept(concept)
 
         # 7. Use the metadata from context expander for references
         references = aggregated_metadata
@@ -914,13 +1036,13 @@ class OrchestratorAgent(BaseAgent):
         
         # Add web sources to references
         references["web_sources"] = web_sources
-
-        # 9. Format final output
-        final_answer = answer
         
+        # Add response to conversation memory
+        self.conversation_memory.add_message("bot", answer, {"explained_concepts": explained_concepts})
+
         print("✅ Orchestration complete.")
         return {
-            "answer": final_answer,
+            "answer": answer,
             "references": references,
             "query_analysis": query_analysis,
             "retrieved_chunks": final_context_chunks

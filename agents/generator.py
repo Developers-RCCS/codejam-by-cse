@@ -3,6 +3,7 @@ from .base import BaseAgent
 from gemini_utils import setup_gemini
 from datetime import datetime
 from urllib.parse import urlparse
+import random
 
 class GeneratorAgent(BaseAgent):
     """Agent responsible for generating answers using Gemini."""
@@ -10,9 +11,148 @@ class GeneratorAgent(BaseAgent):
         print("✨ Initializing Gemini model...")
         self.gemini = setup_gemini()
         print("✅ Gemini model initialized.")
+        # Initialize personality traits and conversation starters
+        self.initialize_persona()
+        
+    def initialize_persona(self):
+        """Initialize teaching persona traits and conversation elements."""
+        # Personality traits
+        self.persona_traits = {
+            "enthusiasm_level": 0.8,  # 0.0-1.0 scale
+            "friendliness": 0.85,
+            "formality": 0.5,  # Lower is more casual
+            "encouragement": 0.9,
+            "humor": 0.6,
+        }
+        
+        # Conversation starters for different topics
+        self.topic_starters = {
+            "industrial_revolution": [
+                "The Industrial Revolution was such a fascinating period of transformation!",
+                "Have you ever thought about how different our lives would be without the Industrial Revolution?",
+                "The Industrial Revolution completely changed how people lived and worked."
+            ],
+            "world_war": [
+                "Understanding the World Wars helps us recognize patterns that still affect global politics today.",
+                "The World Wars were watershed moments that reshaped our modern world.",
+                "Studying the World Wars gives us important lessons about conflict and peace."
+            ],
+            "sri_lanka": [
+                "Sri Lanka has such a rich and complex history!",
+                "The history of Sri Lanka shows fascinating intersections of culture and colonialism.",
+                "Sri Lankan history provides great examples of how geography shapes a nation's development."
+            ]
+        }
+        
+        # Enthusiasm expressions
+        self.enthusiasm_phrases = [
+            "That's a great question!",
+            "What a fascinating topic to explore!",
+            "I'm excited to help you understand this!",
+            "This is actually one of my favorite historical subjects!",
+            "That's a really thoughtful question.",
+            "I love discussing this period of history!"
+        ]
+        
+        # Encouragement phrases
+        self.encouragement_phrases = [
+            "You're asking exactly the right questions to understand this topic better.",
+            "That's a very perceptive question about a complex topic.",
+            "You have a good eye for the important historical details!",
+            "You're making excellent connections between these historical events.",
+            "Keep thinking critically about history like this!"
+        ]
+        
+        # Follow-up questions to encourage engagement
+        self.follow_up_questions = [
+            "What aspect of this interests you most?",
+            "Does this connect to anything else you've been learning about?",
+            "Can you think of any modern parallels to these historical events?",
+            "Have you thought about how this might have played out differently?",
+            "What do you think was the most significant impact of these events?"
+        ]
+        
+        # Transition phrases between topics
+        self.transitions = [
+            "Building on that idea...",
+            "This connects to another important aspect...",
+            "Looking at this from another angle...",
+            "What's also interesting about this period is...",
+            "To put this in context..."
+        ]
+        
+        # Discourse markers for more natural speech
+        self.discourse_markers = [
+            "You know,",
+            "Actually,",
+            "Interestingly,",
+            "Of course,",
+            "Well,",
+            "In fact,"
+        ]
 
-    def create_prompt(self, query: str, context_chunks: list[dict], query_analysis: dict) -> str:
-        """Create an effective prompt based on query type and context with enhanced source attribution."""
+    def _get_random_element(self, element_list):
+        """Get a random element from a list."""
+        if not element_list:
+            return ""
+        return random.choice(element_list)
+        
+    def _personalize_response(self, base_response, conversation_context=None):
+        """
+        Add personality elements to a response based on conversation context.
+        
+        Args:
+            base_response: The educational content of the response
+            conversation_context: Optional context about the conversation state and user
+            
+        Returns:
+            str: A more personalized, conversational response
+        """
+        if not conversation_context:
+            conversation_context = {
+                "conversation_state": "exploration",
+                "rapport_level": 3,
+                "interaction_count": 1
+            }
+        
+        # Extract context information    
+        state = conversation_context.get("conversation_state", "exploration")
+        rapport = conversation_context.get("rapport_level", 3)
+        interactions = conversation_context.get("interaction_count", 1)
+        recurring_topics = conversation_context.get("topics_of_interest", [])
+        
+        # Personalize based on conversation state
+        personalized_response = ""
+        
+        # For first interactions or greeting state, use more welcoming language
+        if state == "greeting" or interactions <= 2:
+            # Add enthusiastic greeting
+            if rapport <= 5:
+                personalized_response += f"{self._get_random_element(self.enthusiasm_phrases)} "
+        
+        # Adding the core educational content
+        personalized_response += base_response
+        
+        # Add follow-up or encouragement for ongoing conversations
+        if state in ["exploration", "learning"] and rapport >= 3:
+            if random.random() < 0.7:  # 70% chance
+                personalized_response += f"\n\n{self._get_random_element(self.encouragement_phrases)}"
+                
+            # Add a follow-up question if we're developing rapport
+            if random.random() < 0.5 and rapport >= 5:  # 50% chance when rapport is high
+                personalized_response += f" {self._get_random_element(self.follow_up_questions)}"
+        
+        # If the user has recurring interests, acknowledge them
+        if recurring_topics and random.random() < 0.3:  # 30% chance
+            topic = recurring_topics[0].replace(" ", "_")
+            if topic in self.topic_starters:
+                starter = self._get_random_element(self.topic_starters[topic])
+                personalized_response = f"{starter} {personalized_response}"
+                
+        return personalized_response
+
+    def create_prompt(self, query: str, context_chunks: list[dict], query_analysis: dict, conversation_context: dict = None) -> str:
+        """Create an effective prompt based on query type and context with enhanced source attribution and personality."""
         # Extract context text - if chunks have a confidence score, sort by it
         if context_chunks and "confidence" in context_chunks[0]:
             sorted_chunks = sorted(context_chunks, key=lambda x: x.get("confidence", 0), reverse=True)
@@ -114,44 +254,87 @@ Current date and time:
         # Has web sources flag
         has_web_sources = len(web_chunks) > 0
 
-        # Customize instructions based on query type
+        # Conversation context for personalization
+        conversation_state = "exploration"
+        if conversation_context:
+            conversation_state = conversation_context.get("conversation_state", "exploration")
+        
+        # Get chat history if available
+        chat_history = ""
+        if conversation_context and conversation_context.get("chat_history"):
+            history = conversation_context["chat_history"]
+            if history:
+                chat_history = "\n**Recent Conversation:**\n"
+                for msg in history[-3:]:  # Last 3 messages
+                    sender = "Student" if msg["sender"] == "user" else "Tutor"
+                    chat_history += f"{sender}: {msg['message']}\n"
+
+        # Customize instructions based on query type with personality elements
+        personality_instructions = """**Personality Guidelines:**
+You are Yuhasa, a friendly and enthusiastic history tutor with a passion for making history come alive. You're speaking with a Grade 11 student who's looking for help understanding historical concepts.
+
+- Be warm and encouraging, using a conversational, slightly informal tone.
+- Show genuine enthusiasm for history ("The Industrial Revolution was actually a fascinating period!")
+- Ask occasional follow-up questions to spark curiosity ("Have you ever wondered why...?")
+- Use relatable analogies to explain complex concepts
+- Vary your response style-sometimes be energetic, other times thoughtful
+- Address the student directly using "you" to create connection
+- Occasionally share brief, engaging historical facts beyond the direct question
+- Acknowledge when topics might be challenging to understand
+- Be supportive when information isn't available ("That's a great question, though I don't have that specific information in my sources.")
+
+Remember to maintain this friendly, encouraging tone while still providing academically accurate information with proper citations. Your goal is to be both an educational resource and an engaging conversation partner.
+"""
+
         if query_type == "factual":
-            instructions = """**Instructions:**
-You are Yuhasa, a helpful AI tutor specializing in Grade 11 History. Answer this factual question accurately based on the provided context above.
-- Provide a direct and concise answer with specific facts from the context.
+            instructions = f"""**Instructions:**
+{personality_instructions}
+
+You are answering a factual history question. 
+- Provide an accurate and engaging answer based on the context provided.
 - For textbook content, cite page numbers in square brackets like this: [p. 42].
 - For web content, mention the source domain in your answer (e.g., "According to Wikipedia...").
 - If the answer isn't in the context, clearly state that you don't have that information.
-- Answer only what is asked, avoid unnecessary elaboration.
+- Use a warm, conversational tone that makes history feel accessible and interesting.
+- Include 1-2 interesting related facts if appropriate to build engagement.
 """
         elif query_type == "causal/analytical":
-            instructions = """**Instructions:**
-You are Yuhasa, a helpful AI tutor specializing in Grade 11 History. Answer this analytical question based on the provided context above.
+            instructions = f"""**Instructions:**
+{personality_instructions}
+
+You are answering an analytical history question that requires explanation of causes, effects, or developments.
 - Provide a structured analysis that explains causes, effects, or developments.
 - Organize your response with clear reasoning that connects evidence to conclusions.
 - For textbook content, cite page numbers in square brackets like this: [p. 42].
 - For web content, mention the source domain in your analysis (e.g., "According to the historical records from...").
 - Focus on explaining "why" or "how" rather than just listing facts.
-- If the context doesn't provide sufficient information, acknowledge limitations in your analysis.
+- Use a conversational tone that makes complex historical analysis accessible.
+- Consider asking a thought-provoking follow-up question at the end to encourage deeper thinking.
 """
         elif query_type == "comparative":
-            instructions = """**Instructions:**
-You are Yuhasa, a helpful AI tutor specializing in Grade 11 History. Answer this comparative question based on the provided context above.
+            instructions = f"""**Instructions:**
+{personality_instructions}
+
+You are answering a comparative history question that requires analyzing similarities and differences.
 - Structure your answer to clearly compare and contrast the items.
 - Organize by points of comparison rather than describing each item separately.
 - Present similarities and differences in a balanced way.
 - For textbook content, cite page numbers in square brackets like this: [p. 42].
 - For web content, mention the source domain in your comparison (e.g., "According to...").
-- If the context lacks information about one of the comparison items, acknowledge this limitation.
+- Use analogies or examples that make the comparison more relatable to a Grade 11 student.
+- Maintain an engaging, conversational tone throughout your explanation.
 """
         else:  # Default/unknown
-            instructions = """**Instructions:**
-You are Yuhasa, a helpful AI tutor specializing in Grade 11 History. Answer the question accurately based on the provided context above.
-- Be concise and clear in your explanation.
+            instructions = f"""**Instructions:**
+{personality_instructions}
+
+You are answering a history question from a Grade 11 student.
+- Provide a clear, accurate, and engaging answer based on the provided context.
 - For textbook content, cite the relevant page numbers from the context like this: [p. 42].
 - For web content, clearly indicate the source of information (e.g., "According to the article from...").
 - If the context doesn't contain the answer, state that clearly and do not guess.
-- If multiple pages or sources are relevant, cite them all.
+- Use a warm, conversational tone that makes history interesting and accessible.
+- If appropriate, ask a thoughtful follow-up question to encourage further exploration.
 """
 
         # Add complexity handling
@@ -160,6 +343,7 @@ You are Yuhasa, a helpful AI tutor specializing in Grade 11 History. Answer the 
 - This is a complex multi-part question. Make sure to address all aspects.
 - Structure your answer with clear sections for each part of the question.
 - Ensure you're drawing connections between different parts where relevant.
+- Use a slightly more detailed approach, but maintain the engaging conversational style.
 """
 
         # Add special instructions for handling multiple perspectives if conflicts detected
@@ -171,6 +355,7 @@ You are Yuhasa, a helpful AI tutor specializing in Grade 11 History. Answer the 
 - Then acknowledge alternative perspectives with phrases like "However, according to [source]..." or "An alternative view suggests..."
 - Make it clear to the reader when information is contested or when sources disagree.
 - For significant factual discrepancies (like dates, numbers, or key events), present both versions and indicate which has stronger source credibility.
+- Present these different perspectives in a way that helps students understand that history often involves different interpretations.
 """
 
         # Add special instructions for handling multiple source types
@@ -185,25 +370,47 @@ You are Yuhasa, a helpful AI tutor specializing in Grade 11 History. Answer the 
 - Format textbook references as: Textbook, pages: X-Y
 """
 
+        # Add conversation context to help generate more contextual responses
+        if conversation_context:
+            context_str = "\n**Conversation Context:**\n"
+            if conversation_context.get("rapport_level"):
+                context_str += f"- Rapport level: {conversation_context['rapport_level']}/10\n"
+            if conversation_context.get("conversation_state"):
+                context_str += f"- Conversation state: {conversation_context['conversation_state']}\n"
+            if conversation_context.get("topics_of_interest"):
+                context_str += f"- Student's recurring topics of interest: {', '.join(conversation_context['topics_of_interest'])}\n"
+            if conversation_context.get("concepts_already_explained"):
+                context_str += f"- Concepts already explained: {', '.join(conversation_context['concepts_already_explained'][:5])}\n"
+                
+            instructions += context_str
+
+        # Add chat history if available
+        if chat_history:
+            instructions += f"\n{chat_history}"
+
         # Finalize prompt
         complete_prompt = f"{base_prompt}\n{instructions}\n**Answer:**"
         return complete_prompt
 
-    def run(self, query: str, context_chunks: list[dict], query_analysis: dict = None) -> str:
-        """Generates an answer based on the query, context chunks, and query analysis with enhanced source attribution."""
+    def run(self, query: str, context_chunks: list[dict], query_analysis: dict = None, conversation_context: dict = None) -> str:
+        """Generates an answer based on the query, context chunks, and query analysis with enhanced source attribution and personality."""
         print("✍️ Generating answer...")
         
         if not query_analysis:
             query_analysis = {"query_type": "unknown", "complexity": "simple"}
             
         # Create appropriate prompt based on query type
-        prompt = self.create_prompt(query, context_chunks, query_analysis)
+        prompt = self.create_prompt(query, context_chunks, query_analysis, conversation_context)
         
         try:
             # Generate response
             response = self.gemini.generate_content(prompt)
             answer = response.text
             print("✅ Answer generated.")
+            
+            # Personalize the response if we have conversation context
+            if conversation_context:
+                answer = self._personalize_response(answer, conversation_context)
             
             # Post-processing to ensure references are included and properly formatted
             has_references_section = "References:" in answer or "References" in answer.split("\n")[-1]
@@ -259,8 +466,26 @@ You are Yuhasa, a helpful AI tutor specializing in Grade 11 History. Answer the 
                 else:
                     answer += perspective_note
 
-            return answer
+            # Extract concepts that were explained in this answer for conversation memory
+            explained_concepts = []
+            # Simple concept extraction from headings or bold text
+            import re
+            # Match text between ** or # heading markers
+            concept_pattern = r'\*\*(.*?)\*\*|# (.*?)\n|## (.*?)\n'
+            for match in re.finditer(concept_pattern, answer):
+                concept = match.group(1) or match.group(2) or match.group(3)
+                if concept and len(concept) > 3 and concept not in ["References"]:
+                    explained_concepts.append(concept)
+
+            # Return both the answer and any concepts that were explained
+            return {
+                "answer": answer,
+                "explained_concepts": explained_concepts
+            }
         except Exception as e:
             print(f"❌ Error generating answer: {e}")
-            return f"Sorry, I encountered an error while generating the answer: {e}"
+            return {
+                "answer": f"Sorry, I encountered an error while generating the answer: {e}",
+                "explained_concepts": []
+            }
 
