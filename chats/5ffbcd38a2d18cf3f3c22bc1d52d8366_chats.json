@@ -1,0 +1,20 @@
+[
+  [
+    {
+      "sender": "bot",
+      "message": "Hi there! \ud83d\udc4b I'm Histronaut, your AI history tutor. Ask me anything about history or click one of the suggestions above to get started!\n\n\n"
+    },
+    {
+      "sender": "user",
+      "message": "Ancient Egypt"
+    },
+    {
+      "sender": "user",
+      "message": "Ancient Egypt"
+    },
+    {
+      "sender": "bot",
+      "message": "Unfortunately, the provided textbook excerpts do not contain any information about Ancient Egypt.  My apologies! I can't answer your question based on the available material."
+    }
+  ]
+]
