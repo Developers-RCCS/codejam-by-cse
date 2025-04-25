@@ -7,6 +7,7 @@ import os
 from datetime import datetime
 import json
 import sys
+import glob
 
 # Add debug print statements
 print("Starting web application...")
@@ -15,6 +16,12 @@ print(f"Current working directory: {os.getcwd()}")
 
 app = Flask(__name__)
 app.secret_key = 'dj89we923n7yr27y4x74y8x634txb6fx763t4x763tn47s6326st6s7t26nn73n6'
+
+# Configuration
+MAX_HISTORY_LENGTH = 20  # Maximum number of messages to keep in memory
+CHATS_DIR = 'chats'
+MAX_CONTEXT_LENGTH = 3000  # Max tokens for context window
+SUMMARY_INTERVAL = 5       # Generate summary every 5 messages
 
 # Load FAISS index + metadata
 try:
@@ -39,17 +46,9 @@ except Exception as e:
     # Continue anyway for debugging
 
 # Ensure chats directory exists
-if not os.path.exists('chats'):
-    os.makedirs('chats')
+if not os.path.exists(CHATS_DIR):
+    os.makedirs(CHATS_DIR)
     print("Created chats directory")
-
-# List templates directory to verify files
-templates_dir = os.path.join(os.getcwd(), 'templates')
-if os.path.exists(templates_dir):
-    print(f"Templates directory exists: {templates_dir}")
-    print(f"Contents: {os.listdir(templates_dir)}")
-else:
-    print(f"Templates directory does not exist: {templates_dir}")
 
 def search_chunks(query, top_k=300):
     query_embedding = np.array(embed_text(query), dtype="float32").reshape(1, -1)
@@ -68,10 +67,10 @@ def reasoning_agent(query, context_chunks, chat_history=None):
         [f"(Page {c['page']}) {c['text']}" for c in context_chunks]
     )
 
-    # 🧠 Construct real-time dialogue memory
+    # Construct conversation history
     conversation = ""
     if chat_history:
-        trimmed = chat_history[-50:]
+        trimmed = chat_history[-MAX_HISTORY_LENGTH:]  # Limit history length
         for msg in trimmed:
             role = "Student" if msg["sender"] == "user" else "Yuhasa"
             conversation += f"{role}: {msg['message']}\n"
@@ -91,7 +90,7 @@ You have access to several textbook excerpts. Your job is to:
 2. Piece together clues or references, even if the answer isn't directly stated.
 3. Provide a thoughtful, reasoned answer — just like a human tutor would.
 4. Stay consistent with what you've already said
-5. Don’t repeat answers unless helpful
+5. Don't repeat answers unless helpful
 
 ✅ You are allowed to infer answers based on strong clues.
 ❌ You must not invent facts that contradict the context.
@@ -101,8 +100,10 @@ In case some relevant details are spread across multiple pages, try to combine t
 
 ---
 
-🧠 Chat History:
-{conversation}
+Current date and time: {datetime.now().strftime('%Y-%m-%d')}
+
+# MEMORY SYSTEM
+{conversation if chat_history else "No prior conversation history"}
 
 📘 Textbook Context:
 {context_text}
@@ -114,23 +115,50 @@ In case some relevant details are spread across multiple pages, try to combine t
 """
     return prompt
 
-
 def generate_answer(query, context_chunks, chat_history=None):
     prompt = reasoning_agent(query, context_chunks, chat_history)
     response = gemini.generate_content(prompt)
     return response.text.strip()
 
-def save_chat_history(user_id, messages):
-    os.makedirs("chats", exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"chats/{user_id}_{timestamp}.json"
+def save_chat_history(user_id, chat_data):
+    """Save complete chat session data including history and metadata"""
+    os.makedirs(CHATS_DIR, exist_ok=True)
+    filename = f"{CHATS_DIR}/{user_id}_chats.json"
     
-    with open(filename, 'w') as f:
-        json.dump(messages, f)
+    try:
+        # Load existing chats if any
+        existing_chats = []
+        if os.path.exists(filename):
+            with open(filename, 'r') as f:
+                existing_chats = json.load(f)
+        
+        # Update or add the current chat session
+        updated = False
+        for i, chat in enumerate(existing_chats):
+            if chat['id'] == chat_data['id']:
+                existing_chats[i] = chat_data
+                updated = True
+                break
+        
+        if not updated:
+            existing_chats.append(chat_data)
+        
+        # Save back to file
+        with open(filename, 'w') as f:
+            json.dump(existing_chats, f, indent=2)
+            
+    except Exception as e:
+        print(f"Error saving chat history: {e}")
 
 def load_chat_history(user_id):
-    # In a real app, you'd implement proper chat history loading
-    # For now, we'll just return an empty list
+    """Load all chat sessions for a user"""
+    filename = f"{CHATS_DIR}/{user_id}_chats.json"
+    if os.path.exists(filename):
+        try:
+            with open(filename, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading chat history: {e}")
     return []
 
 @app.route('/')
@@ -164,6 +192,15 @@ def home():
         </html>
         """
 
+def generate_summary(chat_history):
+    """Generate a summary of the conversation so far"""
+    summary_prompt = f"""
+    Summarize this conversation briefly while preserving key details:
+    {chat_history}
+    """
+    response = gemini.generate_content(summary_prompt)
+    return response.text
+
 @app.route('/ask', methods=['POST'])
 def ask():
     if 'user_id' not in session:
@@ -171,27 +208,41 @@ def ask():
     
     data = request.get_json()
     query = data.get('query', '')
+    chat_history = data.get('chat_history', [])
     
     if not query:
         return jsonify({'error': 'Empty query'}), 400
-    
-    # Get chat history from request or session
-    chat_history = data.get('chat_history', [])
-    
-    # Process the query
+
+    # Generate summary periodically
+    if len(chat_history) > 0 and len(chat_history) % SUMMARY_INTERVAL == 0:
+        summary = generate_summary(chat_history)
+        chat_history.append({'sender': 'system', 'message': f"Conversation summary: {summary}"})
+
+    # Prepare context window (most recent messages first)
+    context_messages = []
+    token_count = 0
+    for msg in reversed(chat_history):
+        msg_content = f"{msg['sender']}: {msg['message']}"
+        if token_count + len(msg_content.split()) > MAX_CONTEXT_LENGTH:
+            break
+        context_messages.insert(0, msg)  # Add to beginning to maintain order
+        token_count += len(msg_content.split())
+
+    # Process query with full context
     chunks = search_chunks(query)
-    answer = generate_answer(query, chunks)
+    answer = generate_answer(query, chunks, context_messages)
     
-    # Update chat history
-    chat_history.append({'sender': 'user', 'message': query})
-    chat_history.append({'sender': 'bot', 'message': answer})
+    # Update history
+    updated_history = chat_history.copy()
+    updated_history.append({'sender': 'user', 'message': query})
+    updated_history.append({'sender': 'bot', 'message': answer})
     
-    # Save the updated chat history
-    save_chat_history(session['user_id'], chat_history)
+    # Save to disk
+    save_chat_history(session['user_id'], updated_history)
     
     return jsonify({
         'answer': answer,
-        'chat_history': chat_history
+        'chat_history': updated_history
     })
 
 if __name__ == '__main__':

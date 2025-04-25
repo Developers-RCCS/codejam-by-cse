@@ -1,6 +1,7 @@
 # agents/generator.py
 from .base import BaseAgent
 from gemini_utils import setup_gemini
+from datetime import datetime
 
 class GeneratorAgent(BaseAgent):
     """Agent responsible for generating answers using Gemini."""
@@ -36,6 +37,9 @@ class GeneratorAgent(BaseAgent):
 
 **Question:**
 {query}
+
+Current date and time:
+{datetime.now().strftime('%Y-%m-%d')}
 """
 
         # Customize instructions based on query type
