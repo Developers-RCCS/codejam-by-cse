@@ -102,7 +102,7 @@ In case some relevant details are spread across multiple pages, try to combine t
 
 Current date and time: {datetime.now().strftime('%Y-%m-%d')}
 
-# MEMORY SYSTEM
+# IMPORTANT: If the textbook content provided does not have the relevent information, Use the chat history:
 {conversation if chat_history else "No prior conversation history"}
 
 📘 Textbook Context:

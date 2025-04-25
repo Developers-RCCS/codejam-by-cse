@@ -40,6 +40,7 @@ class GeneratorAgent(BaseAgent):
 
 Current date and time:
 {datetime.now().strftime('%Y-%m-%d')}
+
 """
 
         # Customize instructions based on query type
