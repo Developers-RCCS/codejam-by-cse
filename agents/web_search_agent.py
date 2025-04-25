@@ -51,6 +51,10 @@ class WebSearchMetrics:
         self.failed_requests = 0
         self.source_distribution = defaultdict(int)
         self.daily_metrics = {}
+        self.query_types = defaultdict(int)  # Track query types that trigger web search
+        self.content_quality_scores = []  # Track content quality scores
+        self.topic_classification_history = []  # Enhanced topic classification tracking
+        self.multi_topic_queries = []  # Track queries that span multiple topics
         
         # Thread lock for thread safety
         self.lock = threading.Lock()
@@ -76,7 +80,12 @@ class WebSearchMetrics:
     def record_request_time(self, url: str, duration: float) -> None:
         """Record the response time for a web request."""
         with self.lock:
-            self.request_times.append({"url": url, "duration": duration, "timestamp": time.time()})
+            self.request_times.append({
+                "url": url, 
+                "duration": duration, 
+                "timestamp": time.time(),
+                "domain": urlparse(url).netloc
+            })
             self.request_time_hist.observe(duration)
             logger.debug(f"Recorded request time for {url}: {duration:.2f}s")
     
@@ -107,34 +116,115 @@ class WebSearchMetrics:
             if total > 0:
                 self.success_rate_gauge.set(self.successful_requests / total)
     
-    def record_topic_classification(self, query: str, predicted_topic: str, actual_topic: str = None) -> None:
-        """Record topic classification result for accuracy tracking."""
+    def record_topic_classification(self, query: str, predicted_topic: str, actual_topic: str = None, 
+                                   classification_details: Dict = None) -> None:
+        """
+        Record detailed topic classification result for accuracy tracking.
+        
+        Args:
+            query: User query string
+            predicted_topic: Predicted topic category
+            actual_topic: Actual topic category if known (for evaluation)
+            classification_details: Dictionary with detailed classification metrics
+        """
         with self.lock:
-            self.topic_accuracy[query] = {
+            entry = {
+                "query": query,
                 "predicted": predicted_topic,
                 "actual": actual_topic,
-                "timestamp": time.time()
+                "timestamp": time.time(),
+                "details": classification_details
             }
+            
+            # Store in tracking dictionary
+            self.topic_accuracy[query] = entry
+            
+            # Add to history for trend analysis
+            self.topic_classification_history.append(entry)
+            
+            # Keep history manageable
+            if len(self.topic_classification_history) > 1000:
+                self.topic_classification_history = self.topic_classification_history[-1000:]
     
     def record_source_used(self, source_type: str) -> None:
         """Record which source was used in the final response."""
         with self.lock:
             self.source_distribution[source_type] += 1
     
-    def get_cache_hit_rate(self) -> float:
-        """Calculate the cache hit rate."""
+    def record_query_type(self, query_type: str) -> None:
+        """Record the type of query that triggered web search."""
         with self.lock:
-            total = self.cache_hits + self.cache_misses
+            self.query_types[query_type] += 1
+    
+    def record_content_quality(self, url: str, quality_score: float) -> None:
+        """Record content quality score."""
+        with self.lock:
+            self.content_quality_scores.append({
+                "url": url,
+                "quality_score": quality_score,
+                "timestamp": time.time(),
+                "domain": urlparse(url).netloc
+            })
+    
+    def record_multi_topic_query(self, query: str, primary_topic: str, secondary_topics: List[str], 
+                                confidence_scores: Dict[str, float]) -> None:
+        """Record a query that spans multiple topics."""
+        with self.lock:
+            self.multi_topic_queries.append({
+                "query": query,
+                "primary_topic": primary_topic,
+                "secondary_topics": secondary_topics,
+                "confidence_scores": confidence_scores,
+                "timestamp": time.time()
+            })
+    
+    def get_cache_hit_rate(self, time_period: str = "all") -> float:
+        """
+        Calculate the cache hit rate.
+        
+        Args:
+            time_period: Time period to calculate hit rate for ('day', 'week', 'month', 'all')
+            
+        Returns:
+            float: Cache hit rate
+        """
+        with self.lock:
+            # Filter by time period if needed
+            if time_period == "all":
+                hits = self.cache_hits
+                misses = self.cache_misses
+            else:
+                # Implementation for filtering by time period would go here
+                # For simplicity, we're just using all data for now
+                hits = self.cache_hits
+                misses = self.cache_misses
+                
+            total = hits + misses
             if total == 0:
                 return 0
-            return self.cache_hits / total
+            return hits / total
     
-    def get_average_request_time(self) -> float:
-        """Calculate the average request time."""
+    def get_average_request_time(self, domain: str = None) -> float:
+        """
+        Calculate the average request time, optionally filtered by domain.
+        
+        Args:
+            domain: Optional domain to filter by
+            
+        Returns:
+            float: Average request time in seconds
+        """
         with self.lock:
             if not self.request_times:
                 return 0
-            return sum(item["duration"] for item in self.request_times) / len(self.request_times)
+                
+            if domain:
+                filtered_times = [item for item in self.request_times if item["domain"] == domain]
+                if not filtered_times:
+                    return 0
+                return sum(item["duration"] for item in filtered_times) / len(filtered_times)
+            else:
+                return sum(item["duration"] for item in self.request_times) / len(self.request_times)
     
     def get_success_rate(self) -> float:
         """Calculate the success rate of web requests."""
@@ -149,6 +239,117 @@ class WebSearchMetrics:
         with self.lock:
             return dict(self.source_distribution)
     
+    def get_topic_classification_accuracy(self, last_n: int = None) -> Dict[str, Any]:
+        """
+        Calculate the topic classification accuracy if known actual topics are available.
+        
+        Args:
+            last_n: Only use the last N classification results (None for all)
+            
+        Returns:
+            Dict: Statistics about topic classification performance
+        """
+        with self.lock:
+            # Filter entries with both predicted and actual values
+            entries = [e for e in self.topic_classification_history if e["actual"] is not None]
+            
+            # Limit to last N if specified
+            if last_n is not None and last_n < len(entries):
+                entries = entries[-last_n:]
+                
+            if not entries:
+                return {"accuracy": None, "count": 0, "error_distribution": {}}
+                
+            # Calculate accuracy
+            correct = sum(1 for e in entries if e["predicted"] == e["actual"])
+            accuracy = correct / len(entries) if entries else None
+            
+            # Calculate error distribution
+            error_distribution = defaultdict(int)
+            for e in entries:
+                if e["predicted"] != e["actual"]:
+                    error_key = f"{e['actual']} → {e['predicted']}"
+                    error_distribution[error_key] += 1
+            
+            return {
+                "accuracy": accuracy,
+                "count": len(entries),
+                "correct": correct,
+                "error_distribution": dict(error_distribution)
+            }
+    
+    def get_domain_performance(self) -> Dict[str, Dict[str, float]]:
+        """
+        Get performance metrics grouped by domain.
+        
+        Returns:
+            Dict: Performance metrics by domain
+        """
+        with self.lock:
+            domains = set(item["domain"] for item in self.request_times)
+            result = {}
+            
+            for domain in domains:
+                domain_times = [item for item in self.request_times if item["domain"] == domain]
+                domain_quality = [item for item in self.content_quality_scores if item["domain"] == domain]
+                
+                avg_time = sum(item["duration"] for item in domain_times) / len(domain_times) if domain_times else 0
+                avg_quality = sum(item["quality_score"] for item in domain_quality) / len(domain_quality) if domain_quality else 0
+                
+                result[domain] = {
+                    "avg_response_time": avg_time,
+                    "avg_quality_score": avg_quality,
+                    "request_count": len(domain_times)
+                }
+                
+            return result
+
+    def generate_visualization_data(self, metric_type: str) -> Dict[str, Any]:
+        """
+        Generate formatted data for visualization of specific metrics.
+        
+        Args:
+            metric_type: Type of metric to visualize ('cache_hit_rate', 'response_times', 
+                        'topic_accuracy', 'source_distribution')
+                        
+        Returns:
+            Dict: Formatted data for visualization
+        """
+        with self.lock:
+            if metric_type == "cache_hit_rate":
+                # Generate data for cache hit rate trend
+                return {"labels": ["Current"], "values": [self.get_cache_hit_rate()], "type": "gauge"}
+                
+            elif metric_type == "response_times":
+                # Group by domain for bar chart
+                domain_perf = self.get_domain_performance()
+                return {
+                    "labels": list(domain_perf.keys()),
+                    "values": [dp["avg_response_time"] for dp in domain_perf.values()],
+                    "type": "bar"
+                }
+                
+            elif metric_type == "topic_accuracy":
+                # Get topic classification accuracy stats
+                accuracy = self.get_topic_classification_accuracy()
+                if accuracy["accuracy"] is None:
+                    return {"labels": [], "values": [], "type": "pie"}
+                
+                return {
+                    "accuracy": accuracy["accuracy"],
+                    "count": accuracy["count"],
+                    "correct": accuracy["correct"],
+                    "error_distribution": accuracy["error_distribution"],
+                    "type": "summary"
+                }
+                
+            elif metric_type == "source_distribution":
+                # Get source distribution for pie chart
+                dist = self.get_source_distribution()
+                return {"labels": list(dist.keys()), "values": list(dist.values()), "type": "pie"}
+                
+            return {"error": "Unknown metric type"}
+    
     def save_metrics(self) -> None:
         """Save the current metrics to disk."""
         with self.lock:
@@ -159,26 +360,48 @@ class WebSearchMetrics:
             # Prepare metrics data
             metrics_data = {
                 "timestamp": time.time(),
+                "date": datetime.now().isoformat(),
                 "cache_hit_rate": self.get_cache_hit_rate(),
                 "average_request_time": self.get_average_request_time(),
                 "success_rate": self.get_success_rate(),
                 "source_distribution": self.get_source_distribution(),
                 "total_searches": self.successful_requests + self.failed_requests,
                 "total_cache_hits": self.cache_hits,
-                "total_cache_misses": self.cache_misses
+                "total_cache_misses": self.cache_misses,
+                "domain_performance": self.get_domain_performance(),
+                "query_types": dict(self.query_types)
             }
             
             # Save to file
             with open(metrics_file, 'w') as f:
                 json.dump(metrics_data, f, indent=2)
                 
+            # Also save a summary in the latest.json file
+            latest_file = os.path.join(self.metrics_dir, "latest.json")
+            with open(latest_file, 'w') as f:
+                json.dump(metrics_data, f, indent=2)
+                
             logger.info(f"Metrics saved to {metrics_file}")
+            
+            # Create visualization friendly data
+            vis_data = {
+                "cache_hit_rate": self.generate_visualization_data("cache_hit_rate"),
+                "response_times": self.generate_visualization_data("response_times"),
+                "topic_accuracy": self.generate_visualization_data("topic_accuracy"),
+                "source_distribution": self.generate_visualization_data("source_distribution")
+            }
+            
+            # Save visualization data
+            vis_file = os.path.join(self.metrics_dir, f"vis_data_{timestamp}.json")
+            with open(vis_file, 'w') as f:
+                json.dump(vis_data, f, indent=2)
     
     def load_metrics(self) -> None:
         """Load metrics from the most recent file if it exists."""
         try:
             # Find most recent metrics file
-            metric_files = [f for f in os.listdir(self.metrics_dir) if f.startswith("metrics_") and f.endswith(".json")]
+            metric_files = [f for f in os.listdir(self.metrics_dir) 
+                           if f.startswith("metrics_") and f.endswith(".json")]
             if not metric_files:
                 return
                 
@@ -197,9 +420,57 @@ class WebSearchMetrics:
             for source, count in metrics_data.get("source_distribution", {}).items():
                 self.source_distribution[source] = count
                 
+            for query_type, count in metrics_data.get("query_types", {}).items():
+                self.query_types[query_type] = count
+                
             logger.info(f"Loaded metrics from {metrics_file}")
         except Exception as e:
             logger.warning(f"Failed to load previous metrics: {e}")
+            
+    def generate_metrics_report(self) -> str:
+        """
+        Generate a human-readable report of current metrics.
+        
+        Returns:
+            str: Formatted metrics report
+        """
+        with self.lock:
+            report = [
+                "# Web Search Metrics Report",
+                f"Report Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                "",
+                "## Cache Performance",
+                f"- Cache Hit Rate: {self.get_cache_hit_rate():.2%}",
+                f"- Total Cache Hits: {self.cache_hits}",
+                f"- Total Cache Misses: {self.cache_misses}",
+                "",
+                "## Request Performance",
+                f"- Average Request Time: {self.get_average_request_time():.3f}s",
+                f"- Success Rate: {self.get_success_rate():.2%}",
+                f"- Total Requests: {self.successful_requests + self.failed_requests}",
+                "",
+                "## Source Distribution",
+                *[f"- {source}: {count}" for source, count in self.get_source_distribution().items()],
+                "",
+                "## Domain Performance",
+            ]
+            
+            # Add domain performance details
+            domain_perf = self.get_domain_performance()
+            for domain, metrics in domain_perf.items():
+                report.append(f"### {domain}")
+                report.append(f"- Average Response Time: {metrics['avg_response_time']:.3f}s")
+                report.append(f"- Average Content Quality: {metrics['avg_quality_score']:.2f}/1.0")
+                report.append(f"- Request Count: {metrics['request_count']}")
+                report.append("")
+            
+            # Add query type distribution
+            report.extend([
+                "## Query Types",
+                *[f"- {qtype}: {count}" for qtype, count in self.query_types.items()],
+            ])
+            
+            return "\n".join(report)
 
 class WebSearchAgent(BaseAgent):
     """Agent responsible for conducting domain-restricted web searches."""
@@ -235,13 +506,55 @@ class WebSearchAgent(BaseAgent):
         # Initialize async session - will be created on first use
         self.session = None
         
-        # Pre-compute topic descriptions for embedding similarity
+        # Enhanced topic descriptions for more accurate classification
         self.topic_descriptions = {
-            "wright_brothers": "The Wright brothers were American aviation pioneers who invented, built, and flew the world's first successful motor-operated airplane. Their first flight was in December 1903.",
-            "education_sri_lanka": "Education in Sri Lanka has a history influenced by British colonial rule, missionary schools, and recent development programs focusing on accessibility and quality.",
-            "mahaweli_development": "The Mahaweli Development Programme is Sri Lanka's largest irrigation and hydropower project, started in 1970 to develop agriculture and provide electricity throughout the country.",
-            "marie_antoinette": "Marie Antoinette was the last Queen of France before the French Revolution, known for the phrase 'Let them eat cake' although historians debate whether she actually said this.",
-            "adolf_hitler": "Adolf Hitler was the leader of Nazi Germany from 1933 to 1945 who initiated World War II in Europe and was central to the Holocaust genocide."
+            "wright_brothers": """The Wright brothers, Orville and Wilbur, were American aviation pioneers who invented, built, 
+                and flew the world's first successful motor-operated airplane. Their first powered flight occurred on 
+                December 17, 1903, at Kitty Hawk, North Carolina. Their invention revolutionized transportation and warfare,
+                leading to the development of the aviation industry. The brothers conducted extensive research on aerodynamics,
+                developed their own wind tunnel, and created a system of flight controls that became standard in modern aircraft.""",
+                
+            "education_sri_lanka": """Education in Sri Lanka has a long history dating back to ancient times with Buddhist 
+                monasteries serving as centers of learning. During the colonial period, Christian missionary schools were 
+                established. After independence in 1948, Sri Lanka implemented free education from primary school to university 
+                level. Today, Sri Lanka boasts one of the highest literacy rates in South Asia. The education system includes 
+                primary, secondary, and tertiary levels, with students taking national examinations at various stages.""",
+                
+            "mahaweli_development": """The Mahaweli Development Programme is Sri Lanka's largest multipurpose national development 
+                project, initiated in the 1970s. It involved the construction of several large dams, reservoirs, and hydroelectric 
+                power stations along the Mahaweli River, Sri Lanka's longest river. The program aimed to increase agricultural 
+                production through irrigation, generate hydroelectric power, create employment opportunities, and resettle landless 
+                families. It significantly transformed Sri Lanka's landscape, economy, and agricultural capabilities.""",
+                
+            "marie_antoinette": """Marie Antoinette was the last Queen of France before the French Revolution. Born an Archduchess 
+                of Austria in 1755, she married the future Louis XVI in 1770. Her reign was marked by extravagance, political intrigue,
+                and growing public discontent. Although popularly attributed with saying 'Let them eat cake' when told the peasants had 
+                no bread, historians doubt she ever said this. Following the revolution, she was tried for treason and executed by 
+                guillotine on October 16, 1793, at the age of 37.""",
+                
+            "adolf_hitler": """Adolf Hitler was an Austrian-born German politician who led the Nazi Party and rose to power as 
+                Chancellor of Germany in 1933, later becoming Führer (leader) of Nazi Germany from 1934 until his death in 1945. 
+                He initiated World War II in Europe with the invasion of Poland and was central to the Holocaust, the genocide of 
+                six million Jews and millions of others. His fascist ideology emphasized antisemitism, anti-communism, German 
+                nationalism, and the concept of an Aryan master race."""
+        }
+        
+        # Keywords associated with each topic for keyword-based matching
+        self.topic_keywords = {
+            "wright_brothers": ["wright", "brothers", "orville", "wilbur", "airplane", "flight", "aviation", "kitty hawk", 
+                               "aircraft", "flying", "pilot", "glider", "wing", "propeller", "aeronautics"],
+            
+            "education_sri_lanka": ["education", "sri lanka", "school", "university", "student", "teacher", "curriculum", 
+                                   "exam", "literacy", "colombo", "kandy", "learning", "ceylon", "primary", "secondary"],
+            
+            "mahaweli_development": ["mahaweli", "development", "river", "dam", "irrigation", "hydroelectric", "agriculture", 
+                                    "sri lanka", "water", "power", "reservoir", "farming", "settlement", "project", "victoria"],
+            
+            "marie_antoinette": ["marie", "antoinette", "france", "queen", "french revolution", "louis xvi", "versailles", 
+                                "guillotine", "cake", "austria", "bourbon", "habsburgs", "royalty", "aristocracy"],
+            
+            "adolf_hitler": ["hitler", "nazi", "germany", "world war", "ww2", "holocaust", "führer", "reich", "berlin", 
+                            "antisemitism", "jew", "wehrmacht", "ss", "gestapo", "mein kampf"]
         }
         
         logger.info("WebSearchAgent initialized successfully")
@@ -326,52 +639,41 @@ class WebSearchAgent(BaseAgent):
         # Convert query to lowercase for matching
         query_lower = query.lower()
         
-        # APPROACH 1: Simple keyword-based matching (from existing implementation)
-        topic_keyword_scores = {}
+        # APPROACH 1: Keyword-based matching
+        keyword_scores = {}
         
-        for topic, domains in APPROVED_DOMAINS.items():
+        for topic, keywords in self.topic_keywords.items():
             # Initialize score for this topic
             score = 0
             
-            # Convert topic words to individual matching terms
-            topic_words = topic.replace("_", " ").lower().split()
+            # Check exact keyword matches
+            for keyword in keywords:
+                if keyword in query_lower:
+                    # Higher weights for multi-word matches
+                    if " " in keyword:
+                        score += 3
+                    else:
+                        score += 2
             
-            # Award points for topic words appearing in query
-            for word in topic_words:
-                if word in query_lower:
-                    score += 2
-            
-            # Check for similar words or partial matches
-            for word in topic_words:
-                if len(word) > 4:  # Only check substantial words
+            # Check for partial matches (for longer keywords only)
+            for keyword in keywords:
+                if len(keyword) > 4:  # Only check substantial words
                     for q_word in query_lower.split():
-                        # Fuzzy matching - if query word contains most of topic word
-                        if len(word) > 3 and word[:3] in q_word:
+                        # Fuzzy matching - if query word contains most of keyword
+                        if len(keyword) > 3 and keyword[:3] in q_word:
                             score += 0.5
             
-            # Additional domain-specific heuristics
-            if topic == "wright_brothers" and ("aviation" in query_lower or "airplane" in query_lower or "flight" in query_lower):
-                score += 1.5
-            elif topic == "education_sri_lanka" and ("education" in query_lower or "school" in query_lower or "sri lanka" in query_lower):
-                score += 1.5
-            elif topic == "mahaweli_development" and ("development" in query_lower or "irrigation" in query_lower or "river" in query_lower):
-                score += 1.5
-            elif topic == "marie_antoinette" and ("france" in query_lower or "revolution" in query_lower or "cake" in query_lower):
-                score += 1.5
-            elif topic == "adolf_hitler" and ("nazi" in query_lower or "germany" in query_lower or "ww2" in query_lower or "world war" in query_lower):
-                score += 1.5
-                
-            topic_keyword_scores[topic] = score
+            keyword_scores[topic] = score
         
         # Normalize keyword scores to 0-1 range
-        max_keyword_score = max(topic_keyword_scores.values()) if topic_keyword_scores else 1
+        max_keyword_score = max(keyword_scores.values()) if keyword_scores else 1
         if max_keyword_score > 0:
-            normalized_keyword_scores = {t: s/max_keyword_score for t, s in topic_keyword_scores.items()}
+            normalized_keyword_scores = {t: s/max_keyword_score for t, s in keyword_scores.items()}
         else:
-            normalized_keyword_scores = {t: 0 for t in topic_keyword_scores}
+            normalized_keyword_scores = {t: 0 for t in keyword_scores}
 
         # APPROACH 2: Embedding-based semantic similarity
-        topic_embedding_scores = {}
+        embedding_scores = {}
         
         # Get query embedding
         query_embedding = np.array(embed_text(query), dtype="float32")
@@ -389,19 +691,29 @@ class WebSearchAgent(BaseAgent):
                 np.linalg.norm(query_embedding) * np.linalg.norm(topic_embedding)
             )
             
-            topic_embedding_scores[topic] = float(similarity)
+            embedding_scores[topic] = float(similarity)
         
         # COMBINED APPROACH: Weight keyword and embedding scores
-        # Can adjust these weights based on performance
-        keyword_weight = 0.4
-        embedding_weight = 0.6
+        # Enhanced weighting - embedding similarity is more important
+        keyword_weight = 0.3  # Was 0.4
+        embedding_weight = 0.7  # Was 0.6
         
         combined_scores = {}
-        for topic in APPROVED_DOMAINS.keys():
+        classification_details = {}
+        
+        for topic in self.topic_keywords.keys():
             keyword_score = normalized_keyword_scores.get(topic, 0)
-            embedding_score = topic_embedding_scores.get(topic, 0)
+            embedding_score = embedding_scores.get(topic, 0)
             
-            combined_scores[topic] = (keyword_score * keyword_weight) + (embedding_score * embedding_weight)
+            combined_score = (keyword_score * keyword_weight) + (embedding_score * embedding_weight)
+            combined_scores[topic] = combined_score
+            
+            # Store details for logging and analysis
+            classification_details[topic] = {
+                "keyword_score": keyword_score,
+                "embedding_score": embedding_score,
+                "combined_score": combined_score
+            }
         
         # Get topic with highest combined score
         best_topic, best_score = max(combined_scores.items(), key=lambda x: x[1])
@@ -410,28 +722,42 @@ class WebSearchAgent(BaseAgent):
         scores_list = sorted(combined_scores.values(), reverse=True)
         if len(scores_list) > 1:
             margin = scores_list[0] - scores_list[1]  # Difference between best and second-best
-            confidence = min(0.5 + margin, 0.95)  # Convert margin to confidence score
+            confidence = min(0.5 + margin * 2, 0.98)  # Enhanced margin effect on confidence
         else:
             confidence = 0.5  # Default confidence
         
         # If best score is very low, lower confidence
         if best_score < 0.3:
-            confidence = best_score + 0.2
+            confidence = max(0.2, best_score * 0.8)
         
-        # Record performance metrics
-        self.metrics.record_topic_classification(query, best_topic)
+        # Record performance metrics with detailed information
+        self.metrics.record_topic_classification(
+            query, 
+            best_topic,
+            classification_details=classification_details
+        )
         
-        # Log the result
+        # Log the result with enhanced details
         duration = time.time() - start_time
-        logger.info(f"Topic classification for '{query}': {best_topic} (score: {best_score:.2f}, confidence: {confidence:.2f}, time: {duration:.3f}s)")
+        logger.info(f"Topic classification for '{query}': {best_topic} (confidence: {confidence:.2f}, time: {duration:.3f}s)")
+        logger.info(f"Best topic ({best_topic}) keyword score: {normalized_keyword_scores.get(best_topic, 0):.2f}, embedding score: {embedding_scores.get(best_topic, 0):.2f}")
+        
+        second_best = ""
+        if len(scores_list) > 1:
+            second_best_topics = [t for t, s in combined_scores.items() if s == scores_list[1]]
+            if second_best_topics:
+                second_best = second_best_topics[0]
+                logger.info(f"Second best topic: {second_best} (score: {scores_list[1]:.2f}, margin: {margin:.2f})")
         
         return {
             "topic": best_topic,
             "confidence": confidence,
             "score": best_score,
             "keyword_score": normalized_keyword_scores.get(best_topic, 0),
-            "embedding_score": topic_embedding_scores.get(best_topic, 0),
-            "duration_seconds": duration
+            "embedding_score": embedding_scores.get(best_topic, 0),
+            "duration_seconds": duration,
+            "second_best_topic": second_best,
+            "classification_details": classification_details
         }
         
     async def _create_session(self):
@@ -735,7 +1061,7 @@ class WebSearchAgent(BaseAgent):
             text_content = self.extract_text_from_html(html_content)
             if not text_content:
                 continue
-                
+            
             # Chunk the text
             chunks = self.chunk_text(text_content)
             
@@ -759,9 +1085,236 @@ class WebSearchAgent(BaseAgent):
         
         return top_results
     
+    def search_web_multi_topic(self, query: str, max_results: int = 3) -> List[Dict]:
+        """
+        Enhanced web search that detects and handles queries spanning multiple topics.
+        
+        Args:
+            query: User query
+            max_results: Maximum number of results to return
+            
+        Returns:
+            List[Dict]: Ranked and processed web search results from multiple topics
+        """
+        logger.info(f"Performing multi-topic web search for: '{query}'")
+        
+        # Step 1: Identify all potentially relevant topics
+        topic_scores = {}
+        
+        # Get primary topic through standard classification
+        primary_topic_info = self.get_best_topic_category(query)
+        primary_topic = primary_topic_info["topic"]
+        primary_confidence = primary_topic_info["confidence"]
+        
+        # Add primary topic with its confidence score
+        topic_scores[primary_topic] = primary_confidence
+        
+        # If primary confidence is high (>0.85), we can just use that topic
+        if primary_confidence > 0.85:
+            logger.info(f"High confidence in primary topic ({primary_confidence:.2f}), using only {primary_topic}")
+            return self.search_web_with_async(query, primary_topic_info, max_results)
+        
+        # Step 2: Analyze for secondary topics by:
+        # a) Checking embedding similarity with other topics
+        # b) Looking for topic-specific keywords in the query
+        
+        # Start with embedding similarity to other topic descriptions
+        query_embedding = np.array(embed_text(query), dtype="float32")
+        
+        for topic, description in self.topic_descriptions.items():
+            # Skip the primary topic (already added)
+            if topic == primary_topic:
+                continue
+                
+            # Get topic embedding (cached for efficiency)
+            if topic not in self.topic_embeddings:
+                self.topic_embeddings[topic] = np.array(embed_text(description), dtype="float32")
+            
+            topic_embedding = self.topic_embeddings[topic]
+            
+            # Calculate similarity
+            similarity = np.dot(query_embedding, topic_embedding) / (
+                np.linalg.norm(query_embedding) * np.linalg.norm(topic_embedding)
+            )
+            
+            # If similarity is above threshold, consider it a relevant topic
+            if similarity > 0.65:  # Threshold for secondary topics
+                topic_scores[topic] = float(similarity)
+        
+        # Also check for keyword matches in secondary topics
+        query_lower = query.lower()
+        for topic, keywords in self.topic_keywords.items():
+            # Skip if already added through embedding similarity
+            if topic in topic_scores:
+                continue
+                
+            # Check for keyword matches
+            matches = sum(1 for keyword in keywords if keyword.lower() in query_lower)
+            
+            # If we have multiple keyword matches, consider this topic
+            if matches >= 2:
+                # Score based on number of matches, but lower than embedding similarity
+                match_score = min(0.6, 0.3 + 0.1 * matches)
+                topic_scores[topic] = match_score
+        
+        # Step 3: Rank and select top topics
+        relevant_topics = sorted(topic_scores.items(), key=lambda x: x[1], reverse=True)
+        
+        # Select top N topics based on scores and confidence
+        selected_topics = []
+        total_quota = max_results  # Total results quota
+        min_topic_score = 0.4  # Minimum score to be considered relevant
+        
+        # Add topics until we reach quota or run out of relevant topics
+        remaining_quota = total_quota
+        for topic, score in relevant_topics:
+            if score < min_topic_score:
+                continue
+                
+            # Allocate results quota proportionally to confidence
+            # Ensure primary topic gets at least one result
+            if topic == primary_topic:
+                topic_quota = max(1, int(total_quota * 0.5))  # Primary gets at least 50%
+            else:
+                topic_quota = max(1, int(remaining_quota * (score / sum(s for t, s in relevant_topics if t != primary_topic))))
+            
+            remaining_quota -= topic_quota
+            
+            # Must have at least 1 result per topic
+            selected_topics.append({
+                "topic": topic,
+                "score": score,
+                "quota": topic_quota
+            })
+            
+            # Stop if we've allocated all slots
+            if remaining_quota <= 0:
+                break
+        
+        # If we still have quota, add it to the primary topic
+        if remaining_quota > 0 and selected_topics:
+            selected_topics[0]["quota"] += remaining_quota
+        
+        # Log the selected topics
+        logger.info(f"Selected {len(selected_topics)} topics for multi-topic search:")
+        for t in selected_topics:
+            logger.info(f"- {t['topic']}: score {t['score']:.2f}, quota {t['quota']}")
+        
+        # Track this as a multi-topic query for metrics
+        if len(selected_topics) > 1:
+            self.metrics.record_multi_topic_query(
+                query=query,
+                primary_topic=primary_topic,
+                secondary_topics=[t["topic"] for t in selected_topics if t["topic"] != primary_topic],
+                confidence_scores=topic_scores
+            )
+        
+        # Step 4: Search each topic with its quota
+        all_results = []
+        
+        for topic_info in selected_topics:
+            topic = topic_info["topic"]
+            quota = topic_info["quota"]
+            
+            # Create topic info dict similar to get_best_topic_category output
+            topic_dict = {
+                "topic": topic,
+                "confidence": topic_info["score"],
+                "score": topic_info["score"]
+            }
+            
+            # Search this topic
+            logger.info(f"Searching topic '{topic}' with quota {quota}")
+            topic_results = self.search_web_with_async(query, topic_dict, quota)
+            
+            # Tag results with the source topic
+            for result in topic_results:
+                result["metadata"]["original_topic"] = topic
+                
+            all_results.extend(topic_results)
+        
+        # Step 5: Deduplicate and rank the combined results
+        unique_results = self._deduplicate_results(all_results)
+        final_results = self.score_web_results(query, unique_results)
+        
+        # Limit to max_results
+        final_results = final_results[:max_results]
+        
+        logger.info(f"Multi-topic search complete, returning {len(final_results)} results")
+        return final_results
+    
+    def _deduplicate_results(self, results: List[Dict]) -> List[Dict]:
+        """
+        Remove duplicate or nearly identical results from different topics.
+        
+        Args:
+            results: Combined results from multiple topics
+            
+        Returns:
+            List[Dict]: Deduplicated results
+        """
+        if not results:
+            return []
+            
+        # Use domains + similarity to detect duplicates
+        unique_results = []
+        domain_chunks = {}  # Map domains to their chunks
+        
+        for chunk in results:
+            url = chunk["metadata"].get("url", "")
+            domain = urlparse(url).netloc if url else ""
+            
+            # If we've seen this domain before, check if content is similar
+            if domain in domain_chunks:
+                # Check similarity with existing chunks from this domain
+                duplicate = False
+                for existing_chunk in domain_chunks[domain]:
+                    similarity = self._content_similarity(chunk["text"], existing_chunk["text"])
+                    if similarity > 0.8:  # High similarity threshold for duplication
+                        duplicate = True
+                        # Keep the one with higher confidence
+                        if chunk.get("confidence", 0) > existing_chunk.get("confidence", 0):
+                            # Replace existing with this one
+                            unique_results.remove(existing_chunk)
+                            unique_results.append(chunk)
+                            domain_chunks[domain].remove(existing_chunk)
+                            domain_chunks[domain].append(chunk)
+                        break
+                
+                if not duplicate:
+                    unique_results.append(chunk)
+                    domain_chunks[domain].append(chunk)
+            else:
+                # First time seeing this domain
+                unique_results.append(chunk)
+                domain_chunks[domain] = [chunk]
+                
+        return unique_results
+    
+    def _content_similarity(self, text1: str, text2: str) -> float:
+        """Calculate cosine similarity between two text chunks."""
+        # Handle empty text
+        if not text1 or not text2:
+            return 0.0
+            
+        # Get embeddings
+        try:
+            embedding1 = np.array(embed_text(text1[:1000]), dtype="float32")
+            embedding2 = np.array(embed_text(text2[:1000]), dtype="float32")
+            
+            # Calculate cosine similarity
+            similarity = np.dot(embedding1, embedding2) / (
+                np.linalg.norm(embedding1) * np.linalg.norm(embedding2)
+            )
+            
+            return float(similarity)
+        except Exception as e:
+            logger.error(f"Error calculating content similarity: {e}")
+            return 0.0
+    
     def run(self, query: str, query_analysis: Dict = None, max_results: int = 3) -> List[Dict]:
         """
-        Run the web search process based on user query.
+        Run the web search process based on user query with enhanced multi-topic support.
         
         Args:
             query: User query string
@@ -773,32 +1326,73 @@ class WebSearchAgent(BaseAgent):
         """
         print(f"🌐 Searching web for information on: '{query}'")
         
-        # Get topic classification
-        topic_info = self.get_best_topic_category(query)
-        print(f"📊 Topic identified: {topic_info['topic']} (confidence: {topic_info['confidence']:.2f})")
+        # Track search metrics
+        self.metrics.search_counter.inc()
         
-        # Use query analysis to enhance topic detection if provided
-        if query_analysis and 'entities' in query_analysis:
-            # Try to match entities to topic categories
-            entity_topics = []
-            for entity in query_analysis['entities']:
-                for topic in APPROVED_DOMAINS.keys():
-                    if entity.lower() in topic.replace('_', ' ').lower():
-                        entity_topics.append(topic)
+        # Record query type if available
+        if query_analysis and "query_type" in query_analysis:
+            self.metrics.record_query_type(query_analysis["query_type"])
             
-            # If entities strongly suggest a different topic
-            if entity_topics and entity_topics[0] != topic_info['topic'] and topic_info['confidence'] < 0.7:
-                print(f"🔄 Adjusting topic based on entity analysis: {entity_topics[0]}")
-                topic_info['topic'] = entity_topics[0]
+        # Determine if query likely spans multiple topics
+        spans_multiple_topics = False
+        topic_count = 0
         
-        # Perform search with async processing
-        search_results = self.search_web_with_async(query, topic_info, max_results)
+        # Use query analysis to detect multiple topics
+        if query_analysis and "entities" in query_analysis:
+            entities = query_analysis["entities"]
+            # Count entities that match different topic keywords
+            topic_matches = defaultdict(int)
+            for entity in entities:
+                entity_lower = entity.lower()
+                for topic, keywords in self.topic_keywords.items():
+                    for keyword in keywords:
+                        if keyword in entity_lower:
+                            topic_matches[topic] += 1
+                            break
+            
+            # If we have entities matching multiple topics
+            topic_count = sum(1 for count in topic_matches.values() if count > 0)
+            spans_multiple_topics = topic_count > 1
+        
+        # Also check query complexity
+        query_has_and = " and " in query.lower()
+        query_has_multiple_sentences = len(re.split(r'[.!?]', query)) > 1
+        
+        # If query appears to span topics or is complex, use multi-topic search
+        if spans_multiple_topics or query_has_and or query_has_multiple_sentences:
+            print(f"📚 Query appears to span multiple topics, using multi-topic search")
+            search_results = self.search_web_multi_topic(query, max_results)
+        else:
+            # Standard single-topic search
+            topic_info = self.get_best_topic_category(query)
+            print(f"📊 Topic identified: {topic_info['topic']} (confidence: {topic_info['confidence']:.2f})")
+            
+            # Use query analysis to enhance topic detection if provided
+            if query_analysis and 'entities' in query_analysis:
+                # Try to match entities to topic categories
+                entity_topics = []
+                for entity in query_analysis['entities']:
+                    for topic in self.topic_keywords.keys():
+                        if entity.lower() in topic.replace('_', ' ').lower():
+                            entity_topics.append(topic)
+                
+                # If entities strongly suggest a different topic
+                if entity_topics and entity_topics[0] != topic_info['topic'] and topic_info['confidence'] < 0.7:
+                    print(f"🔄 Adjusting topic based on entity analysis: {entity_topics[0]}")
+                    topic_info['topic'] = entity_topics[0]
+            
+            # Perform search with async processing
+            search_results = self.search_web_with_async(query, topic_info, max_results)
         
         if not search_results:
             print("❌ No relevant web results found.")
             return []
         
         print(f"✅ Found {len(search_results)} relevant web results.")
+        
+        # Save metrics after search
+        self.metrics.save_metrics()
+        
         return search_results
     
     def _get_cache_key(self, url: str) -> str:

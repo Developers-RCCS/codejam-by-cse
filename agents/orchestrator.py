@@ -11,6 +11,10 @@ import numpy as np
 from gemini_utils import embed_text
 from typing import List, Dict, Tuple, Set, Any
 import logging
+import re
+from datetime import datetime
+from urllib.parse import urlparse
+from collections import defaultdict
 
 # Configure logging
 logging.basicConfig(
@@ -26,21 +30,49 @@ class SourceConflictDetector:
         """Initialize the conflict detector."""
         # Source reliability scores (configurable)
         self.source_reliability = {
+            # Primary sources
             "textbook": 0.85,  # Textbook is highly reliable but may be dated
+            
+            # Web sources with reliability tiers
+            # Tier 1: High reliability (educational/institutional)
             "web_en.wikipedia.org": 0.80,  # Wikipedia is generally reliable
             "web_kids.nationalgeographic.com": 0.85,  # National Geographic Kids is reliable
-            "web_www.history.com": 0.75,
-            "web_www.britannica.com": 0.82,
-            "web_airandspace.si.edu": 0.85,  # Museum sources are highly reliable
-            "web_encyclopedia.ushmm.org": 0.85,  # Holocaust Museum is highly reliable
-            "web_www.bbc.co.uk": 0.80,
-            "web": 0.65,  # Default for other web sources
+            "web_www.britannica.com": 0.82,  # Encyclopedia Britannica
+            "web_www.bbc.co.uk": 0.80,  # BBC
+            "web_airandspace.si.edu": 0.88,  # Smithsonian Museum sources are highly reliable
+            "web_encyclopedia.ushmm.org": 0.88,  # Holocaust Museum is highly reliable
+            
+            # Tier 2: Medium reliability
+            "web_www.history.com": 0.75,  # History Channel
+            "web_www.nasa.gov": 0.85,  # NASA
+            "web_www.nationalgeographic.com": 0.82,  # National Geographic
+            
+            # Tier 3: Mixed reliability
+            "web_www.historyforkids.net": 0.70,
+            "web_www.ducksters.com": 0.65,
+            
+            # Default for other web sources
+            "web": 0.60,
+            
+            # Recency-adjusted sources (empty for now, filled during analysis)
+            "recent_web": 0.00,  # Placeholder, actual value set during conflict resolution
         }
+        
+        # Embedding cache for semantic comparison
         self.embedding_cache = {}
+        
+        # Track conflicts for analysis
+        self.detected_conflicts = []
+        self.conflict_resolutions = []
+    
+    def reset_conflict_tracking(self):
+        """Reset conflict tracking for a new query."""
+        self.detected_conflicts = []
+        self.conflict_resolutions = []
         
     def get_source_reliability(self, chunk: Dict) -> float:
         """
-        Get the reliability score for a chunk based on its source.
+        Get the reliability score for a chunk based on its source with enhanced domain recognition.
         
         Args:
             chunk: Content chunk with metadata
@@ -51,25 +83,125 @@ class SourceConflictDetector:
         metadata = chunk.get("metadata", {})
         source_type = metadata.get("source_type", "")
         
+        # Handle textbook sources
         if source_type == "textbook":
+            # Check if this is an older chapter/section that might be outdated
+            page_num = metadata.get("page", 0)
+            if isinstance(page_num, str):
+                try:
+                    page_num = int(page_num)
+                except ValueError:
+                    page_num = 0
+                    
+            # If we have info about textbook recency, we could adjust here
+            # For now, return the base textbook reliability
             return self.source_reliability["textbook"]
+            
+        # Handle web sources with domain-specific reliability
         elif source_type == "web":
             url = metadata.get("url", "")
             if url:
-                domain = url.split('/')[2] if '//' in url else url.split('/')[0]
+                # Extract domain for reliability lookup
+                domain = urlparse(url).netloc if '//' in url else url.split('/')[0]
                 domain_key = f"web_{domain}"
+                
                 if domain_key in self.source_reliability:
-                    return self.source_reliability[domain_key]
+                    reliability = self.source_reliability[domain_key]
+                    
+                    # Apply recency boost based on published date if available
+                    published_date = metadata.get("published_date")
+                    if published_date:
+                        try:
+                            # Parse date and apply recency boost
+                            date_obj = datetime.strptime(published_date, "%Y-%m-%d")
+                            now = datetime.now()
+                            days_old = (now - date_obj).days
+                            
+                            # Boost for content less than 1 year old
+                            if days_old < 365:
+                                recency_boost = 0.1 * (1 - (days_old / 365))
+                                return min(0.95, reliability + recency_boost)
+                        except:
+                            pass  # If date parsing fails, continue with standard reliability
+                            
+                    return reliability
             
             # Use default web reliability if no specific score
             return self.source_reliability["web"]
             
-        # Default reliability
+        # Default reliability for unknown sources
         return 0.5
+    
+    def evaluate_content_semantic_similarity(self, chunk1: Dict, chunk2: Dict) -> float:
+        """
+        Evaluate semantic similarity between two chunks using embeddings.
+        
+        Args:
+            chunk1: First content chunk
+            chunk2: Second content chunk
+            
+        Returns:
+            float: Similarity score from 0.0 to 1.0
+        """
+        # Get embeddings for each chunk, using cache if available
+        chunk1_id = id(chunk1)
+        if chunk1_id not in self.embedding_cache:
+            self.embedding_cache[chunk1_id] = np.array(embed_text(chunk1["text"][:1000]), dtype="float32")
+        embedding1 = self.embedding_cache[chunk1_id]
+        
+        chunk2_id = id(chunk2)
+        if chunk2_id not in self.embedding_cache:
+            self.embedding_cache[chunk2_id] = np.array(embed_text(chunk2["text"][:1000]), dtype="float32")
+        embedding2 = self.embedding_cache[chunk2_id]
+        
+        # Calculate cosine similarity
+        similarity = np.dot(embedding1, embedding2) / (
+            np.linalg.norm(embedding1) * np.linalg.norm(embedding2)
+        )
+        
+        return float(similarity)
+    
+    def extract_key_facts(self, text: str) -> List[str]:
+        """
+        Extract potential key facts from text for contradiction detection.
+        
+        Args:
+            text: Text content to analyze
+            
+        Returns:
+            List[str]: List of extracted key facts
+        """
+        # Split into sentences
+        sentences = re.split(r'[.!?]+', text)
+        
+        # Filter for sentences that likely contain facts (numbers, dates, named entities)
+        fact_patterns = [
+            r'\b\d{4}\b',  # Years
+            r'\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b',  # Dates
+            r'\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b',  # Month Day, Year
+            r'\b\d+\s+(percent|per cent|%)\b',  # Percentages
+            r'\b(first|second|third|fourth|fifth|last|final)\b',  # Ordinals
+            r'\b(not|never|failed|succeeded|discovered|invented|created|built|destroyed)\b',  # Key verbs
+            r'\b[A-Z][a-z]+\s+[A-Z][a-z]+\b',  # Potential named entities
+        ]
+        
+        potential_facts = []
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+                
+            # Check if sentence matches any fact pattern
+            for pattern in fact_patterns:
+                if re.search(pattern, sentence, re.IGNORECASE):
+                    potential_facts.append(sentence)
+                    break
+                    
+        return potential_facts
     
     def detect_conflicts(self, chunks: List[Dict]) -> Dict[str, List[Dict]]:
         """
-        Detect potential conflicts between chunks from different sources.
+        Detect potential conflicts between chunks from different sources with enhanced detection.
         
         Args:
             chunks: List of content chunks
@@ -79,6 +211,9 @@ class SourceConflictDetector:
         """
         if len(chunks) < 2:
             return {}
+        
+        # Reset conflict tracking
+        self.reset_conflict_tracking()
             
         # Group chunks by high-level topics
         topics = {}
@@ -128,52 +263,218 @@ class SourceConflictDetector:
                 
             # Check if chunks are from different source types
             source_types = set(chunk.get("metadata", {}).get("source_type", "") for chunk in topic_chunks)
-            if len(source_types) > 1:
-                # Check key text features to detect potential contradictions
-                has_contradiction = self._check_for_contradiction(topic_chunks)
+            
+            # If we have mixed sources, analyze for contradictions
+            if len(source_types) > 1 or (len(topic_chunks) >= 3 and "web" in source_types):
+                # Check content for contradiction patterns
+                has_contradiction = self._check_for_contradiction(topic, topic_chunks)
                 if has_contradiction:
                     conflicts[topic] = topic_chunks
+                    
+                    # Log detection
+                    self.detected_conflicts.append({
+                        "topic": topic,
+                        "sources": [c.get("metadata", {}).get("source_type", "unknown") for c in topic_chunks],
+                        "chunks": len(topic_chunks),
+                        "contradiction_details": has_contradiction
+                    })
+        
+        # Log conflict detection results
+        if conflicts:
+            logger.info(f"Detected {len(conflicts)} topics with potential source conflicts")
         
         return conflicts
     
-    def _check_for_contradiction(self, chunks: List[Dict]) -> bool:
+    def _check_for_contradiction(self, topic: str, chunks: List[Dict]) -> Dict:
         """
-        Check if chunks potentially contradict each other.
-        
-        This is a simple implementation that checks for opposing key phrases.
-        A more sophisticated approach could use NLI models.
+        Check if chunks potentially contradict each other with improved detection mechanisms.
         
         Args:
+            topic: Topic identifier
             chunks: List of potentially conflicting chunks
             
         Returns:
-            bool: True if contradiction detected
+            Dict: Contradiction information or False if no contradiction
         """
-        # Simple patterns that might indicate contradictions
-        contradiction_patterns = [
-            ("did not", "did"),
-            ("never", "did"),
-            ("false", "true"),
-            ("myth", "fact"),
-            ("incorrect", "correct")
-        ]
-        
-        # Convert all text to lowercase for comparison
+        # Extract text content from each chunk
         texts = [chunk["text"].lower() for chunk in chunks]
         
-        # Check for contradiction patterns
-        for pattern_a, pattern_b in contradiction_patterns:
+        # Method 1: Pattern-based contradiction detection
+        contradiction_patterns = [
+            {"positive": "did", "negative": "did not", "subject": ""},
+            {"positive": "was", "negative": "was not", "subject": ""},
+            {"positive": "were", "negative": "were not", "subject": ""},
+            {"positive": "is", "negative": "is not", "subject": ""},
+            {"positive": "are", "negative": "are not", "subject": ""},
+            {"positive": "can", "negative": "cannot", "subject": ""},
+            {"positive": "has", "negative": "has not", "subject": ""},
+            {"positive": "does", "negative": "does not", "subject": ""},
+            {"positive": "successful", "negative": "unsuccessful", "subject": ""},
+            {"positive": "true", "negative": "false", "subject": ""},
+            {"positive": "correct", "negative": "incorrect", "subject": ""},
+            {"positive": "before", "negative": "after", "subject": ""}
+        ]
+        
+        # Check for direct contradictions
+        for pattern in contradiction_patterns:
+            pos, neg = pattern["positive"], pattern["negative"]
+            
             for i, text_a in enumerate(texts):
-                if pattern_a in text_a:
+                if pos in text_a:
+                    # Get surrounding context to identify the subject
+                    pos_context = self._extract_context(text_a, pos, window=30)
+                    
                     for j, text_b in enumerate(texts):
-                        if i != j and pattern_b in text_b:
-                            return True
+                        if i != j and neg in text_b:
+                            # Get surrounding context
+                            neg_context = self._extract_context(text_b, neg, window=30)
+                            
+                            # If contexts are discussing the same subject
+                            similarity = self._text_similarity(pos_context, neg_context)
+                            if similarity > 0.6:
+                                return {
+                                    "type": "direct_contradiction",
+                                    "pattern": f"{pos} vs {neg}",
+                                    "context_a": pos_context,
+                                    "context_b": neg_context,
+                                    "similarity": similarity,
+                                    "chunk_indices": [i, j]
+                                }
+        
+        # Method 2: Numerical fact contradiction
+        numerical_patterns = [
+            r'(\d{4})\s*(-|to)\s*(\d{4})',  # Date ranges like 1939-1945
+            r'(in|on|around|about)\s+(\d{4})',  # Years like "in 1939"
+            r'(\d+)\s+(percent|per cent|%)',  # Percentages
+            r'(\d+)\s+(people|persons|soldiers|casualties)',  # Counts of people
+        ]
+        
+        # Extract numerical facts from each text
+        for pattern in numerical_patterns:
+            for i, text_a in enumerate(texts):
+                matches_a = re.finditer(pattern, text_a, re.IGNORECASE)
+                
+                for match_a in matches_a:
+                    # Get the full match and the surrounding context
+                    num_fact_a = match_a.group(0)
+                    context_a = self._extract_context(text_a, num_fact_a, window=50)
+                    
+                    for j, text_b in enumerate(texts):
+                        if i == j:
+                            continue
+                            
+                        # Look for similar context but different numbers
+                        matches_b = re.finditer(pattern, text_b, re.IGNORECASE)
+                        for match_b in matches_b:
+                            num_fact_b = match_b.group(0)
+                            
+                            # If the numerical facts are different
+                            if num_fact_a != num_fact_b:
+                                context_b = self._extract_context(text_b, num_fact_b, window=50)
+                                
+                                # Check if contexts are similar but numbers differ
+                                context_similarity = self._text_similarity(context_a, context_b, exclude=num_fact_a)
+                                if context_similarity > 0.65:
+                                    return {
+                                        "type": "numerical_contradiction",
+                                        "fact_a": num_fact_a,
+                                        "fact_b": num_fact_b,
+                                        "context_a": context_a,
+                                        "context_b": context_b,
+                                        "similarity": context_similarity,
+                                        "chunk_indices": [i, j]
+                                    }
+        
+        # Method 3: Named entity attribution contradictions
+        # Simplified version - look for sentences that mention the same entity with contradictory actions
+        for i, text_a in enumerate(texts):
+            sentences_a = re.split(r'[.!?]+', text_a)
+            
+            for sentence_a in sentences_a:
+                # Look for sentences with entities (simplified as capitalized words)
+                entities = re.findall(r'\b([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)\b', sentence_a)
+                
+                for entity in entities:
+                    entity_lower = entity.lower()
+                    
+                    # Skip common non-entity capitalized words
+                    if entity_lower in ['i', 'january', 'february', 'march', 'april', 'may', 'june', 'july', 
+                                       'august', 'september', 'october', 'november', 'december']:
+                        continue
+                        
+                    # Find sentences in other chunks that mention the same entity
+                    for j, text_b in enumerate(texts):
+                        if i == j:
+                            continue
+                            
+                        sentences_b = re.split(r'[.!?]+', text_b)
+                        for sentence_b in sentences_b:
+                            if entity.lower() in sentence_b.lower():
+                                # Check if actions/descriptions are different with similar context
+                                # Get verb phrases around the entity
+                                a_context = self._extract_context(sentence_a, entity, window=60)
+                                b_context = self._extract_context(sentence_b, entity, window=60)
+                                
+                                if a_context and b_context:
+                                    # Check semantic similarity of contexts
+                                    embedding_a = embed_text(a_context)
+                                    embedding_b = embed_text(b_context)
+                                    similarity = np.dot(embedding_a, embedding_b) / (
+                                        np.linalg.norm(embedding_a) * np.linalg.norm(embedding_b)
+                                    )
+                                    
+                                    # If contexts are somewhat similar but not too similar
+                                    # (might be discussing same entity but with conflicting info)
+                                    if 0.6 <= similarity <= 0.85:
+                                        return {
+                                            "type": "entity_attribution",
+                                            "entity": entity,
+                                            "context_a": a_context,
+                                            "context_b": b_context,
+                                            "similarity": float(similarity),
+                                            "chunk_indices": [i, j]
+                                        }
         
         return False
     
+    def _extract_context(self, text: str, target: str, window: int = 30) -> str:
+        """Extract text surrounding a target phrase."""
+        if not target in text:
+            return ""
+            
+        index = text.find(target)
+        start = max(0, index - window)
+        end = min(len(text), index + len(target) + window)
+        return text[start:end].strip()
+    
+    def _text_similarity(self, text_a: str, text_b: str, exclude: str = "") -> float:
+        """Calculate semantic similarity between two text snippets."""
+        # Remove the exclusion text if provided
+        if exclude:
+            text_a = text_a.replace(exclude, "")
+            text_b = text_b.replace(exclude, "")
+            
+        # Clean up
+        text_a = text_a.strip()
+        text_b = text_b.strip()
+        
+        if not text_a or not text_b:
+            return 0.0
+            
+        # Get embeddings
+        embedding_a = embed_text(text_a)
+        embedding_b = embed_text(text_b)
+        
+        # Calculate similarity
+        similarity = np.dot(embedding_a, embedding_b) / (
+            np.linalg.norm(embedding_a) * np.linalg.norm(embedding_b)
+        )
+        
+        return float(similarity)
+    
     def resolve_conflicts(self, conflicts: Dict[str, List[Dict]]) -> Dict[str, Dict]:
         """
-        Resolve conflicts between chunks by using reliability and recency.
+        Resolve conflicts between chunks with enhanced reliability analysis and multi-perspective support.
         
         Args:
             conflicts: Map of topics to conflicting chunks
@@ -188,13 +489,31 @@ class SourceConflictDetector:
             weighted_chunks = []
             for chunk in chunks:
                 reliability = self.get_source_reliability(chunk)
-                recency_boost = 0.1 if chunk.get("metadata", {}).get("source_type") == "web" else 0
+                
+                # Recency boost for web sources with recent information
+                recency_boost = 0
+                metadata = chunk.get("metadata", {})
+                if metadata.get("source_type") == "web":
+                    # Default small boost for web (assumes more recent than textbook)
+                    recency_boost = 0.05
+                    
+                    # Additional boost for explicitly recent content
+                    if "published_date" in metadata:
+                        try:
+                            pub_date = datetime.strptime(metadata["published_date"], "%Y-%m-%d")
+                            now = datetime.now()
+                            if (now - pub_date).days < 365:  # Less than a year old
+                                recency_boost = 0.1
+                        except:
+                            pass  # If date parsing fails, use default boost
                 
                 weighted_chunks.append({
                     "chunk": chunk,
                     "reliability": reliability,
+                    "recency_boost": recency_boost,
                     "weight": reliability + recency_boost,
-                    "source_type": chunk.get("metadata", {}).get("source_type", "unknown")
+                    "source_type": chunk.get("metadata", {}).get("source_type", "unknown"),
+                    "domain": self._extract_domain(chunk.get("metadata", {}).get("url", ""))
                 })
             
             # Sort by weight
@@ -203,21 +522,110 @@ class SourceConflictDetector:
             # Determine if conflict needs presentation of multiple perspectives
             weights = [c["weight"] for c in sorted_chunks]
             
-            # If top two sources are close in reliability, present both perspectives
+            # Multiple perspectives criteria:
+            # 1. If top two sources are close in reliability (within 0.15)
+            # 2. If sources are from different tiers (e.g., textbook vs. web)
+            # 3. If the conflict involves a significant numerical or factual disagreement
+            
             multiple_perspectives = False
+            perspective_reason = ""
+            
+            # Check weight difference
             if len(weights) >= 2 and (weights[0] - weights[1]) < 0.15:
                 multiple_perspectives = True
+                perspective_reason = "similar_reliability"
+            
+            # Check source types
+            source_types = set(c["source_type"] for c in sorted_chunks)
+            if len(source_types) > 1 and "textbook" in source_types and len(chunks) > 2:
+                multiple_perspectives = True
+                perspective_reason = "varied_sources"
+                
+            # Get conflict type if detected
+            conflict_info = self._check_for_contradiction(topic, [c["chunk"] for c in sorted_chunks])
+            if conflict_info and conflict_info.get("type") == "numerical_contradiction":
+                multiple_perspectives = True
+                perspective_reason = "numerical_conflict"
             
             # Create resolution info
-            resolutions[topic] = {
+            resolution = {
                 "primary": sorted_chunks[0]["chunk"],
-                "alternatives": [c["chunk"] for c in sorted_chunks[1:]] if multiple_perspectives else [],
+                "alternatives": [c["chunk"] for c in sorted_chunks[1:3]] if multiple_perspectives else [], # Limit to top 2 alternatives
                 "multiple_perspectives": multiple_perspectives,
+                "perspective_reason": perspective_reason,
                 "confidence": sorted_chunks[0]["weight"],
-                "sources": {c["source_type"]: c["reliability"] for c in sorted_chunks}
+                "confidence_margin": weights[0] - weights[1] if len(weights) > 1 else 1.0,
+                "sources": {c["source_type"]: c["reliability"] for c in sorted_chunks},
+                "source_weights": {c["domain"] if c["domain"] else c["source_type"]: c["weight"] for c in sorted_chunks},
+                "conflict_info": conflict_info
             }
+            
+            resolutions[topic] = resolution
+            
+            # Track resolution for analysis
+            self.conflict_resolutions.append({
+                "topic": topic,
+                "resolution_type": "multiple_perspectives" if multiple_perspectives else "single_source",
+                "reason": perspective_reason,
+                "primary_source": sorted_chunks[0]["source_type"],
+                "primary_domain": sorted_chunks[0]["domain"],
+                "alternatives_count": len(resolution["alternatives"]),
+                "confidence": resolution["confidence"]
+            })
         
         return resolutions
+    
+    def _extract_domain(self, url: str) -> str:
+        """Extract domain from URL."""
+        if not url:
+            return ""
+            
+        try:
+            domain = urlparse(url).netloc
+            return domain
+        except:
+            return ""
+    
+    def get_conflict_statistics(self) -> Dict:
+        """
+        Get statistics about detected conflicts and resolutions.
+        
+        Returns:
+            Dict: Statistics about conflicts
+        """
+        return {
+            "total_conflicts_detected": len(self.detected_conflicts),
+            "conflicts_by_type": self._count_by_field(self.detected_conflicts, 
+                                                    lambda x: x.get("contradiction_details", {}).get("type", "unknown")),
+            "resolutions_by_type": self._count_by_field(self.conflict_resolutions, "resolution_type"),
+            "sources_in_conflicts": self._sources_in_conflicts(),
+            "primary_resolution_sources": self._count_by_field(self.conflict_resolutions, "primary_source"),
+            "multi_perspective_reasons": self._count_by_field(self.conflict_resolutions, "reason")
+        }
+    
+    def _count_by_field(self, items: List[Dict], field_or_func) -> Dict:
+        """Count items by a field or function result."""
+        result = defaultdict(int)
+        
+        for item in items:
+            if callable(field_or_func):
+                key = field_or_func(item)
+            else:
+                key = item.get(field_or_func, "unknown")
+                
+            result[key] += 1
+            
+        return dict(result)
+    
+    def _sources_in_conflicts(self) -> Dict[str, int]:
+        """Count sources involved in conflicts."""
+        sources = defaultdict(int)
+        
+        for conflict in self.detected_conflicts:
+            for source in conflict.get("sources", []):
+                sources[source] += 1
+                
+        return dict(sources)
 
 
 class OrchestratorAgent(BaseAgent):
