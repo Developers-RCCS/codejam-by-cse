@@ -1,8 +1,8 @@
-# Project Explanation: Yuhasa History Tutor
+# Project Explanation: Histronaut History Tutor
 
 ## Overview
 
-This project, "Yuhasa," is an intelligent chatbot designed to act as a history tutor. It leverages a technique called Retrieval-Augmented Generation (RAG) to answer user questions based specifically on the content of the provided "Grade 11 History Textbook" PDF. Instead of relying solely on its general knowledge, the chatbot first retrieves relevant passages from the textbook and then uses that information to generate a comprehensive and contextually accurate answer.
+This project, "Histronaut," is an intelligent chatbot designed to act as a history tutor. It leverages a technique called Retrieval-Augmented Generation (RAG) to answer user questions based specifically on the content of the provided "Grade 11 History Textbook" PDF. Instead of relying solely on its general knowledge, the chatbot first retrieves relevant passages from the textbook and then uses that information to generate a comprehensive and contextually accurate answer.
 
 ## Core Goal
 
