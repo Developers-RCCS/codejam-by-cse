@@ -1,39 +1,124 @@
-import logging
 from flask import Flask, render_template, request, jsonify, session
+import faiss
+import numpy as np
+import pickle
+from gemini_utils import embed_text, setup_gemini
 import os
 from datetime import datetime
 import json
-import time
-from agents.orchestrator import OrchestratorAgent
-import traceback
-from flask import send_file
-import io
-from gtts import gTTS
+import sys
 
-# --- Logging Setup ---
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    handlers=[
-                        logging.StreamHandler()
-                    ])
-logger = logging.getLogger(__name__)
-# --- End Logging Setup ---
+# Add debug print statements
+print("Starting web application...")
+print(f"Python version: {sys.version}")
+print(f"Current working directory: {os.getcwd()}")
 
 app = Flask(__name__)
 app.secret_key = 'dj89we923n7yr27y4x74y8x634txb6fx763t4x763tn47s6326st6s7t26nn73n6'
 
+# Load FAISS index + metadata
+try:
+    print("Attempting to load FAISS index...")
+    index = faiss.read_index("faiss_index.index")
+    print("FAISS index loaded successfully")
+
+    print("Attempting to load metadata...")
+    with open("faiss_metadata.pkl", "rb") as f:
+        metadata = pickle.load(f)
+    print("Metadata loaded successfully")
+
+    texts = metadata["texts"]
+    metadatas = metadata["metadatas"]
+
+    # Setup Gemini for answering
+    print("Setting up Gemini...")
+    gemini = setup_gemini()
+    print("Gemini set up successfully")
+except Exception as e:
+    print(f"Error during initialization: {e}")
+    # Continue anyway for debugging
+
 # Ensure chats directory exists
 if not os.path.exists('chats'):
     os.makedirs('chats')
+    print("Created chats directory")
 
-# Instantiate Orchestrator Agent (globally)
-logger.info("Initializing Orchestrator Agent for the web app...")
-try:
-    orchestrator = OrchestratorAgent()
-    logger.info("Orchestrator Agent initialized successfully.")
-except Exception as e:
-    logger.fatal(f"FATAL ERROR: Could not initialize OrchestratorAgent: {e}", exc_info=True)
-    orchestrator = None
+# List templates directory to verify files
+templates_dir = os.path.join(os.getcwd(), 'templates')
+if os.path.exists(templates_dir):
+    print(f"Templates directory exists: {templates_dir}")
+    print(f"Contents: {os.listdir(templates_dir)}")
+else:
+    print(f"Templates directory does not exist: {templates_dir}")
+
+def search_chunks(query, top_k=300):
+    query_embedding = np.array(embed_text(query), dtype="float32").reshape(1, -1)
+    D, I = index.search(query_embedding, top_k)
+
+    results = []
+    for idx in I[0]:
+        results.append({
+            "text": texts[idx],
+            "page": metadatas[idx]["page"]
+        })
+    return results
+
+def reasoning_agent(query, context_chunks, chat_history=None):
+    context_text = "\n\n".join(
+        [f"(Page {c['page']}) {c['text']}" for c in context_chunks]
+    )
+
+    # 🧠 Construct real-time dialogue memory
+    conversation = ""
+    if chat_history:
+        trimmed = chat_history[-50:]
+        for msg in trimmed:
+            role = "Student" if msg["sender"] == "user" else "Yuhasa"
+            conversation += f"{role}: {msg['message']}\n"
+
+    prompt = f"""
+You are Yuhasa, a smart, calm, and kind female tutor helping a student understand history.
+
+STRICT AND IMPORTANT: Use markdown styling in answers.
+
+Always try to give the direct answer.
+Do not always say "the text says...". Answer like you know the thing not like you have read from somewhere.
+
+Always break long paragraphs into short readable ones.
+
+You have access to several textbook excerpts. Your job is to:
+1. Carefully read and interpret the context.
+2. Piece together clues or references, even if the answer isn't directly stated.
+3. Provide a thoughtful, reasoned answer — just like a human tutor would.
+4. Stay consistent with what you've already said
+5. Don’t repeat answers unless helpful
+
+✅ You are allowed to infer answers based on strong clues.
+❌ You must not invent facts that contradict the context.
+🧠 Think deeply and explain your reasoning if needed.
+
+In case some relevant details are spread across multiple pages, try to combine them and infer the best possible answer using all the provided context.
+
+---
+
+🧠 Chat History:
+{conversation}
+
+📘 Textbook Context:
+{context_text}
+
+❓ Student Question:
+{query}
+
+💬 Your Answer (interpret and reason from the textbook + conversation):
+"""
+    return prompt
+
+
+def generate_answer(query, context_chunks, chat_history=None):
+    prompt = reasoning_agent(query, context_chunks, chat_history)
+    response = gemini.generate_content(prompt)
+    return response.text.strip()
 
 def save_chat_history(user_id, messages):
     os.makedirs("chats", exist_ok=True)
@@ -44,160 +129,71 @@ def save_chat_history(user_id, messages):
         json.dump(messages, f)
 
 def load_chat_history(user_id):
+    # In a real app, you'd implement proper chat history loading
+    # For now, we'll just return an empty list
     return []
-
-def list_user_chats(user_id):
-    """List all chat files for a user, sorted by most recent."""
-    chat_files = []
-    for fname in os.listdir('chats'):
-        if fname.startswith(user_id + '_') and fname.endswith('.json'):
-            chat_files.append(fname)
-    # Sort by timestamp descending
-    chat_files.sort(reverse=True)
-    return chat_files
-
-def get_chat_title(chat_data, fallback):
-    """Get a title for the chat, fallback to filename if not found."""
-    # Try to get a title from the first user message
-    for msg in chat_data:
-        if msg.get('sender') == 'user' and msg.get('message'):
-            return msg['message'][:30] + ('...' if len(msg['message']) > 30 else '')
-    return fallback
 
 @app.route('/')
 def home():
+    print("Received request for home page")
+    # Initialize session if not already done
     if 'user_id' not in session:
         session['user_id'] = os.urandom(16).hex()
+        print(f"Created new user session: {session['user_id']}")
+    else:
+        print(f"Using existing session: {session['user_id']}")
     
+    # Load chat history if any exists
     chat_history = load_chat_history(session['user_id'])
+    print(f"Loaded chat history, entries: {len(chat_history)}")
     
-    return render_template('index.html', chat_history=chat_history)
+    try:
+        print("Attempting to render index.html template")
+        return render_template('index.html', chat_history=chat_history)
+    except Exception as e:
+        print(f"Error rendering template: {e}")
+        return f"""
+        <html>
+        <head><title>Debug Page</title></head>
+        <body>
+        <h1>Template Error</h1>
+        <p>There was an error rendering the template: {e}</p>
+        <p>Current working directory: {os.getcwd()}</p>
+        <p>Templates directory: {os.path.join(os.getcwd(), 'templates')}</p>
+        </body>
+        </html>
+        """
 
 @app.route('/ask', methods=['POST'])
 def ask():
-    start_time = time.time()
-
     if 'user_id' not in session:
         return jsonify({'error': 'Session expired'}), 401
-
-    if orchestrator is None:
-        logger.error("Orchestrator not initialized. Cannot process request.")
-        return jsonify({'error': 'Chatbot service is unavailable due to initialization error.'}), 503
-
+    
     data = request.get_json()
     query = data.get('query', '')
-
+    
     if not query:
-        logger.warning("Received empty query.")
         return jsonify({'error': 'Empty query'}), 400
-
+    
+    # Get chat history from request or session
     chat_history = data.get('chat_history', [])
-
-    try:
-        logger.info(f"Web app received query: '{query}'. Calling orchestrator...")
-        result = orchestrator.run(query=query, chat_history=chat_history)
-        final_answer = result["answer"]
-        logger.info(f"Orchestrator returned answer: {final_answer[:100]}...")
-
-        chat_history.append({'sender': 'user', 'message': query})
-        chat_history.append({'sender': 'bot', 'message': final_answer})
-
-        save_chat_history(session['user_id'], chat_history)
-
-        total_time = time.time() - start_time
-        logger.debug(f"Query: '{query}'")
-        logger.debug(f"  Total Request Time (Web Route): {total_time:.4f}s")
-
-        return jsonify({
-            'answer': final_answer,
-            'chat_history': chat_history
-        })
-
-    except Exception as e:
-        total_time = time.time() - start_time
-        logger.error(f"❌ Error during /ask route processing: {e}", exc_info=True)
-        logger.error(f"  Request processing time before error: {total_time:.4f}s")
-        return jsonify({'error': f'An internal error occurred: {e}'}), 500
-
-@app.route('/api/chats', methods=['GET'])
-def api_list_chats():
-    if 'user_id' not in session:
-        return jsonify({'error': 'Session expired'}), 401
-    user_id = session['user_id']
-    chat_files = list_user_chats(user_id)
-    chats = []
-    for fname in chat_files:
-        path = os.path.join('chats', fname)
-        try:
-            with open(path, 'r') as f:
-                data = json.load(f)
-            title = get_chat_title(data, fname)
-        except Exception:
-            title = fname
-        chats.append({'id': fname, 'title': title})
-    return jsonify({'chats': chats})
-
-@app.route('/api/chat', methods=['POST'])
-def api_new_chat():
-    if 'user_id' not in session:
-        return jsonify({'error': 'Session expired'}), 401
-    user_id = session['user_id']
-    # Optionally accept a title, but we just create an empty chat
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    chat_id = f"{user_id}_{timestamp}.json"
-    path = os.path.join('chats', chat_id)
-    with open(path, 'w') as f:
-        json.dump([], f)
-    return jsonify({'chat_id': chat_id})
-
-@app.route('/api/chat/<chat_id>', methods=['GET'])
-def api_get_chat(chat_id):
-    if 'user_id' not in session:
-        return jsonify({'error': 'Session expired'}), 401
-    user_id = session['user_id']
-    if not chat_id.startswith(user_id + '_'):
-        return jsonify({'error': 'Unauthorized'}), 403
-    path = os.path.join('chats', chat_id)
-    if not os.path.exists(path):
-        return jsonify({'error': 'Chat not found'}), 404
-    with open(path, 'r') as f:
-        data = json.load(f)
-    return jsonify({'chat': data})
-
-@app.route('/api/chat/<chat_id>', methods=['DELETE'])
-def api_delete_chat(chat_id):
-    if 'user_id' not in session:
-        return jsonify({'error': 'Session expired'}), 401
-    user_id = session['user_id']
-    if not chat_id.startswith(user_id + '_'):
-        return jsonify({'error': 'Unauthorized'}), 403
-    path = os.path.join('chats', chat_id)
-    if not os.path.exists(path):
-        return jsonify({'error': 'Chat not found'}), 404
-    os.remove(path)
-    return jsonify({'success': True})
-
-@app.route('/tts', methods=['POST'])
-def text_to_speech():
-    data = request.get_json()
-    text = data.get('text', '')
-    if not text:
-        return jsonify({'error': 'No text provided'}), 400
-    try:
-        # Generate speech using gTTS
-        tts = gTTS(text=text, lang='en')
-        mp3_fp = io.BytesIO()
-        tts.write_to_fp(mp3_fp)
-        mp3_fp.seek(0)
-        # Return the audio file as response
-        return send_file(mp3_fp, mimetype='audio/mpeg', as_attachment=False, download_name='speech.mp3')
-    except Exception as e:
-        logger.error(f"Error generating speech: {e}", exc_info=True)
-        return jsonify({'error': 'Failed to generate speech'}), 500
+    
+    # Process the query
+    chunks = search_chunks(query)
+    answer = generate_answer(query, chunks)
+    
+    # Update chat history
+    chat_history.append({'sender': 'user', 'message': query})
+    chat_history.append({'sender': 'bot', 'message': answer})
+    
+    # Save the updated chat history
+    save_chat_history(session['user_id'], chat_history)
+    
+    return jsonify({
+        'answer': answer,
+        'chat_history': chat_history
+    })
 
 if __name__ == '__main__':
-    if orchestrator:
-        logger.info("Starting Flask development server...")
-        app.run(debug=True)
-    else:
-        logger.critical("Flask server cannot start because OrchestratorAgent failed to initialize.")
+    print("Starting Flask development server...")
+    app.run(debug=True, host='0.0.0.0')
