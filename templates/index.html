@@ -34,7 +34,7 @@
       --primary-bg-light: #f4f6fb;
       --sidebar-bg-dark: rgba(25, 28, 40, 0.9);
       --sidebar-bg-light: rgba(255, 255, 255, 0.85);
-      --glass-bg-dark: rgba(30, 35, 50, 0.6);
+      --glass-bg-dark: rgba(30, 35, 50, 0.733);
       --glass-bg-light: rgba(255, 255, 255, 0.6);
       --glass-border: rgba(255, 255, 255, 0.08);
       --text-primary-dark: #f0f0f0;
@@ -297,6 +297,8 @@
       align-items: center;
       justify-content: space-between;
       user-select: none;
+      margin-left: 20px;
+      margin-right: 20px;
     }
 
     .main-header .about-btn {
@@ -562,6 +564,11 @@
       max-width: 600px;
       width: 100%;
       align-self: center;
+      margin-bottom: 20px;
+    }
+
+    .form-control:focus-visible {
+      outline: none;
     }
 
     .input-group:focus-within {
@@ -582,8 +589,15 @@
       min-width: 0;
     }
 
+    .form-control:focus {
+      background-color: transparent;
+      outline: none;
+    }
+
     .form-control::placeholder {
+      background: transparent;
       color: var(--text-secondary);
+      outline: none;
     }
 
     .btn-send {
