@@ -1,0 +1,36 @@
+[
+  [
+    {
+      "sender": "bot",
+      "message": "Hi there! \ud83d\udc4b I'm Histronaut, your AI history tutor. Ask me anything about history or click one of the suggestions above to get started!\n\n\n"
+    },
+    {
+      "sender": "user",
+      "message": "who came to hill country in 1672?"
+    },
+    {
+      "sender": "bot",
+      "message": "The provided text does not contain information about anyone visiting the hill country in 1672.  The earliest mentioned visit is by John Pybus in 1762.\n\n\n"
+    },
+    {
+      "sender": "user",
+      "message": "wo was the ruler of hil country when john pybus went there?"
+    },
+    {
+      "sender": "bot",
+      "message": "King Keerthi Sri Rajasinghe was the ruler of the hill country when John Pybus visited.\n\n\n"
+    },
+    {
+      "sender": "user",
+      "message": "gh"
+    },
+    {
+      "sender": "user",
+      "message": "gh"
+    },
+    {
+      "sender": "bot",
+      "message": "The provided text doesn't directly answer \"gh\".  To help you, I need a question or clarification.  My previous answers established that King Keerthi Sri Rajasinghe ruled the Hill Country when John Pybus visited in 1762. Is there something else you'd like to know?"
+    }
+  ]
+]
