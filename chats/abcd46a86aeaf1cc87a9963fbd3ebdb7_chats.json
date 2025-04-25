@@ -1,0 +1,20 @@
+[
+  [
+    {
+      "sender": "bot",
+      "message": "Hi there! \ud83d\udc4b I'm Histronaut, your AI history tutor. Ask me anything about history or click one of the suggestions above to get started!\n\n\n"
+    },
+    {
+      "sender": "user",
+      "message": "Don't based on given context above, using your general knowledge answer the question who is the director in making the hiroshima bomb project in world war II."
+    },
+    {
+      "sender": "user",
+      "message": "Don't based on given context above, using your general knowledge answer the question who is the director in making the hiroshima bomb project in world war II."
+    },
+    {
+      "sender": "bot",
+      "message": "The provided text focuses on the consequences of the atomic bombings of Hiroshima and Nagasaki, but it doesn't name the director of the Manhattan Project.  Based on my general knowledge, however, the director of the Manhattan Project, the top-secret US government program that developed the atomic bomb during World War II, was **Leslie Groves**."
+    }
+  ]
+]

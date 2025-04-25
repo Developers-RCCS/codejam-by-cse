@@ -22,8 +22,9 @@ class ContextExpansionAgent(BaseAgent):
         # Calculate context coverage
         total_text_length = sum(len(chunk["text"]) for chunk in retrieved_chunks)
         
-        # Check if we have entities from query in the chunks
-        # This would be populated from query_analysis
+        # Separate web and textbook chunks for assessment
+        textbook_chunks = [c for c in retrieved_chunks if c["metadata"].get("source_type", "textbook") == "textbook"]
+        web_chunks = [c for c in retrieved_chunks if c["metadata"].get("source_type") == "web"]
         
         # Decision logic
         if top_confidence < 0.4:
@@ -37,17 +38,29 @@ class ContextExpansionAgent(BaseAgent):
         if total_text_length < 500:
             print(f"⚠️ Assessment: Short context ({total_text_length} chars), expansion needed.")
             return {"needs_expansion": True, "reason": "Short context"}
+        
+        # If we have web chunks but no textbook chunks, expand to try to get textbook context
+        if web_chunks and not textbook_chunks:
+            print("⚠️ Assessment: Only web chunks available, trying to find textbook content.")
+            return {"needs_expansion": True, "reason": "Missing textbook content"}
             
         print(f"✅ Assessment: Context sufficient (Avg conf: {avg_confidence:.2f}, Length: {total_text_length} chars)")
+        print(f"   Sources: {len(textbook_chunks)} textbook chunks, {len(web_chunks)} web chunks")
         return {"needs_expansion": False, "reason": "Sufficient confidence and context"}
 
     def find_contextual_chunks(self, chunks, retriever, max_additional=3):
         """Find chunks that might be contextually related to the given chunks."""
         if not chunks:
             return []
+        
+        # Only expand textbook chunks using the retriever
+        textbook_chunks = [c for c in chunks if c["metadata"].get("source_type", "textbook") == "textbook"]
+        if not textbook_chunks:
+            print("ℹ️ No textbook chunks to expand from.")
+            return []
             
         # Strategy 1: Find adjacent chunks by page numbers
-        pages = [chunk["metadata"].get("page", 0) for chunk in chunks if "metadata" in chunk]
+        pages = [chunk["metadata"].get("page", 0) for chunk in textbook_chunks if "metadata" in chunk]
         adjacent_pages = set()
         
         for page in pages:
@@ -64,13 +77,13 @@ class ContextExpansionAgent(BaseAgent):
             if metadata.get("page", 0) in adjacent_pages:
                 adjacent_chunks.append({
                     "text": retriever.texts[i],
-                    "metadata": metadata,
+                    "metadata": {**metadata, "source_type": "textbook"},  # Ensure source type is set
                     "confidence": 0.4,  # Lower confidence for adjacent chunks
                     "expansion_method": "adjacent_page"
                 })
                 
         # Strategy 2: Find chunks from same sections
-        sections = [chunk["metadata"].get("section", "") for chunk in chunks if "metadata" in chunk]
+        sections = [chunk["metadata"].get("section", "") for chunk in textbook_chunks if "metadata" in chunk]
         sections = [s for s in sections if s]  # Remove empty sections
         
         section_chunks = []
@@ -83,14 +96,14 @@ class ContextExpansionAgent(BaseAgent):
                         
                     section_chunks.append({
                         "text": retriever.texts[i],
-                        "metadata": metadata,
+                        "metadata": {**metadata, "source_type": "textbook"},  # Ensure source type is set
                         "confidence": 0.35,  # Lower confidence for section-based chunks
                         "expansion_method": "same_section"
                     })
         
         # Combine and limit additional chunks
         additional_chunks = (adjacent_chunks + section_chunks)[:max_additional]
-        print(f"✅ Found {len(additional_chunks)} additional context chunks.")
+        print(f"✅ Found {len(additional_chunks)} additional textbook context chunks.")
         return additional_chunks
 
     def calculate_chunk_similarity(self, chunks):
@@ -123,6 +136,27 @@ class ContextExpansionAgent(BaseAgent):
         if len(chunks) <= 1:
             return chunks
             
+        # Separate web and textbook chunks for redundancy filtering
+        textbook_chunks = [c for c in chunks if c["metadata"].get("source_type", "textbook") == "textbook"]
+        web_chunks = [c for c in chunks if c["metadata"].get("source_type") == "web"]
+        
+        # Filter redundancy within each source type separately
+        filtered_textbook = self._filter_source_redundancy(textbook_chunks, similarity_threshold)
+        filtered_web = self._filter_source_redundancy(web_chunks, similarity_threshold)
+        
+        # Combine filtered chunks
+        filtered_chunks = filtered_textbook + filtered_web
+        
+        print(f"✅ Filtered out {len(chunks) - len(filtered_chunks)} redundant chunks.")
+        print(f"   Remaining: {len(filtered_textbook)} textbook chunks, {len(filtered_web)} web chunks")
+        
+        return filtered_chunks
+        
+    def _filter_source_redundancy(self, chunks, similarity_threshold=0.85):
+        """Filter redundancy within a specific source type."""
+        if len(chunks) <= 1:
+            return chunks
+            
         similarities = self.calculate_chunk_similarity(chunks)
         chunks_to_remove = set()
         
@@ -137,8 +171,6 @@ class ContextExpansionAgent(BaseAgent):
                     
         # Create filtered list
         filtered_chunks = [chunk for i, chunk in enumerate(chunks) if i not in chunks_to_remove]
-        
-        print(f"✅ Filtered out {len(chunks) - len(filtered_chunks)} redundant chunks.")
         return filtered_chunks
 
     def fuse_chunks(self, chunks):
@@ -148,43 +180,72 @@ class ContextExpansionAgent(BaseAgent):
         # Sort chunks by confidence
         sorted_chunks = sorted(chunks, key=lambda x: x.get("confidence", 0), reverse=True)
         
-        # Get metadata for organization
-        chunk_metadata = []
+        # Separate chunks by source type
+        textbook_chunks = []
+        web_chunks = []
+        
         for chunk in sorted_chunks:
-            page = chunk["metadata"].get("page", "Unknown")
-            section = chunk["metadata"].get("section", "Unknown")
-            chunk_metadata.append(f"[Page {page}, Section: {section}]")
-            
-        # Combine text with metadata headers
-        fused_text = ""
-        for i, chunk in enumerate(sorted_chunks):
-            fused_text += f"\n\n--- Excerpt {i+1}: {chunk_metadata[i]} ---\n\n"
-            fused_text += chunk["text"]
-            
-        print(f"✅ Fused {len(sorted_chunks)} chunks into coherent context.")
+            source_type = chunk["metadata"].get("source_type", "textbook")
+            if source_type == "web":
+                web_chunks.append(chunk)
+            else:
+                textbook_chunks.append(chunk)
+        
+        # Fuse textbook chunks
+        textbook_fused = ""
+        if textbook_chunks:
+            textbook_fused = "**Textbook Content:**"
+            for i, chunk in enumerate(textbook_chunks):
+                page = chunk["metadata"].get("page", "Unknown")
+                section = chunk["metadata"].get("section", "Unknown")
+                textbook_fused += f"\n\n--- Excerpt {i+1}: [Page {page}, Section: {section}] ---\n\n"
+                textbook_fused += chunk["text"]
+        
+        # Fuse web chunks
+        web_fused = ""
+        if web_chunks:
+            web_fused = "\n\n**Web Content:**"
+            for i, chunk in enumerate(web_chunks):
+                url = chunk["metadata"].get("url", "Unknown Source")
+                web_fused += f"\n\n--- Web Excerpt {i+1}: [Source: {url}] ---\n\n"
+                web_fused += chunk["text"]
+        
+        # Combine fused text
+        fused_text = textbook_fused + web_fused
+        
+        print(f"✅ Fused {len(textbook_chunks)} textbook chunks and {len(web_chunks)} web chunks into coherent context.")
         return fused_text
 
     def aggregate_metadata(self, chunks: list[dict]) -> dict:
         """Aggregate metadata from all chunks."""
         print("📊 Aggregating metadata...")
         
-        # Extract page numbers
+        # Extract metadata by source type
         pages = set()
         sections = set()
+        web_sources = set()
         
         for chunk in chunks:
             metadata = chunk.get("metadata", {})
-            if "page" in metadata and metadata["page"]:
-                pages.add(metadata["page"])
-            if "section" in metadata and metadata["section"]:
-                sections.add(metadata["section"])
+            source_type = metadata.get("source_type", "textbook")
+            
+            if source_type == "web":
+                if "url" in metadata:
+                    web_sources.add(metadata["url"])
+            else:
+                if "page" in metadata and metadata["page"]:
+                    pages.add(metadata["page"])
+                if "section" in metadata and metadata["section"]:
+                    sections.add(metadata["section"])
                 
+        # Create aggregated metadata dictionary
         aggregated = {
             "pages": sorted(list(pages)),
-            "sections": sorted(list(sections))
+            "sections": sorted(list(sections)),
+            "web_sources": sorted(list(web_sources))
         }
         
-        print(f"✅ Metadata aggregated: {len(pages)} pages, {len(sections)} sections")
+        print(f"✅ Metadata aggregated: {len(pages)} pages, {len(sections)} sections, {len(web_sources)} web sources")
         return aggregated
 
     def run(self, retrieved_chunks: list[dict], query_analysis: dict, retriever_agent) -> tuple[list[dict], dict]:
@@ -204,7 +265,7 @@ class ContextExpansionAgent(BaseAgent):
                 # In a full implementation, we might retrieve for each sub-query
                 # For now, just get related chunks to the current results
             
-            # Find related chunks
+            # Find related chunks (only expands textbook chunks)
             additional_chunks = self.find_contextual_chunks(
                 retrieved_chunks, 
                 retriever_agent

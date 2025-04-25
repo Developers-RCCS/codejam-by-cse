@@ -5,3 +5,8 @@ pypdf
 python-dotenv
 numpy
 gtts
+requests
+beautifulsoup4
+lxml
+urllib3
+cachetools
