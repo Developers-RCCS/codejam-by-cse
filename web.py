@@ -8,6 +8,11 @@ from datetime import datetime
 import json
 import sys
 import glob
+from gtts import gTTS
+import logging;
+import traceback;
+import io;
+from flask import send_file;
 
 # Add debug print statements
 print("Starting web application...")
@@ -244,6 +249,26 @@ def ask():
         'answer': answer,
         'chat_history': updated_history
     })
+
+logger = logging.getLogger(__name__)
+
+@app.route('/tts', methods=['POST'])
+def text_to_speech():
+    data = request.get_json()
+    text = data.get('text', '')
+    if not text:
+        return jsonify({'error': 'No text provided'}), 400
+    try:
+        # Generate speech using gTTS
+        tts = gTTS(text=text, lang='en')
+        mp3_fp = io.BytesIO()
+        tts.write_to_fp(mp3_fp)
+        mp3_fp.seek(0)
+        # Return the audio file as response
+        return send_file(mp3_fp, mimetype='audio/mpeg', as_attachment=False, download_name='speech.mp3')
+    except Exception as e:
+        logger.error(f"Error generating speech: {e}", exc_info=True)
+        return jsonify({'error': 'Failed to generate speech'}), 500
 
 if __name__ == '__main__':
     print("Starting Flask development server...")
