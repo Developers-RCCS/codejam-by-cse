@@ -10,3 +10,6 @@ beautifulsoup4
 lxml
 urllib3
 cachetools
+aiohttp==3.8.4
+scikit-learn==1.2.2
+prometheus-client==0.16.0
