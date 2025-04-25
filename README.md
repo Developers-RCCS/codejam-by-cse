@@ -1,4 +1,4 @@
-# Yuhasa - History Tutor Chatbot
+# Histronaut - History Tutor Chatbot
 
 This project implements a Retrieval-Augmented Generation (RAG) chatbot focused on answering questions about a Grade 11 History textbook. It uses Google's Gemini AI for language understanding and generation, and FAISS for efficient information retrieval from the textbook content. The project intentionally uses minimal dependencies (Flask, FAISS, Gemini, PyPDF) for simplicity, speed, and maintainability.
 
@@ -63,19 +63,6 @@ There seem to be multiple ways to interact with the chatbot:
         ```
     *   Interact with the bot directly in your terminal. Type 'exit' or 'quit' to end the session.
 
-## Project Structure Overview
+## Project Overview
 
-*   `web.py`: Runs the Flask web server for the GUI.
-*   `cli_chat.py`: Provides a command-line interface.
-*   `config.py`: Handles configuration (like API keys).
-*   `faiss_store.py`: Manages the creation and querying of the FAISS vector store.
-*   `gemini_utils.py`: Contains helper functions for interacting with the Gemini API.
-*   `pdf_chunker.py`: Responsible for reading and splitting the PDF document.
-*   `agents/`: Directory containing different components (agents) of the RAG pipeline (Retriever, Generator, Orchestrator, etc.).
-*   `templates/index.html`: The HTML structure for the web interface.
-*   `chats/`: Stores conversation history (JSON files).
-*   `grade-11-history-text-book.pdf`: The source document.
-*   `faiss_index.index`, `faiss_metadata.pkl`: The generated vector store files.
-*   `requirements.txt`: Lists the project dependencies.
-*   `README.md`: This file.
-*   `PROJECT_EXPLANATION.md`: Detailed explanation of the project architecture.
+    [[Read the Project Overview](https://github.com/Developers-RCCS/codejam-by-cse/blob/main/PROJECT_EXPLANATION.md)]
